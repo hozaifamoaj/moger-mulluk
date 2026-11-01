@@ -16,6 +16,11 @@ const COLORS = {
 const LANE_MARKING = { dash: 40, gap: 40, width: 3 } as const;
 const CAMERA_PLAYER_SCREEN_FRACTION = 0.7; // §build-plan M2: car sits at ~70% of screen height
 
+// §3.2 Controls: on-screen reminder of the keyboard bindings. Touch buttons
+// (gas/brake/steer/horn, bottom corners per spec) replace this in M7; until
+// then nothing else on screen shows the player which key does what.
+const CONTROLS_HINT_TEXT = 'W/↑ Gas   S/↓ Brake   A/D or ←/→ Steer   Space Horn';
+
 export class GameScene extends Phaser.Scene {
   private sim!: Sim;
   private input_!: KeyboardInput;
@@ -40,6 +45,17 @@ export class GameScene extends Phaser.Scene {
 
     this.debugText = this.add
       .text(8, 8, '', { fontSize: '16px', color: '#ffffff', backgroundColor: '#000000a0', padding: { x: 6, y: 4 } })
+      .setScrollFactor(0)
+      .setDepth(1000);
+
+    this.add
+      .text(DISPLAY.width / 2, DISPLAY.height - 8, CONTROLS_HINT_TEXT, {
+        fontSize: '15px',
+        color: '#ffffffcc',
+        backgroundColor: '#000000a0',
+        padding: { x: 8, y: 4 },
+      })
+      .setOrigin(0.5, 1)
       .setScrollFactor(0)
       .setDepth(1000);
 

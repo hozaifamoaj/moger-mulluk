@@ -25,5 +25,14 @@ export class MenuScene extends Phaser.Scene {
       .setName('play-button');
 
     playButton.on('pointerup', () => this.scene.start('Game'));
+
+    // §3.2 Controls: shown here too since M2 only has keyboard input (touch
+    // buttons arrive in M7) and nothing else tells the player the bindings.
+    this.add
+      .text(centerX, 700, 'W/↑ Gas   S/↓ Brake   A/D or ←/→ Steer   Space Horn', {
+        fontSize: '18px',
+        color: '#cccccc',
+      })
+      .setOrigin(0.5);
   }
 }
