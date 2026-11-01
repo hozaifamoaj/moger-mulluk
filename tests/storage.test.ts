@@ -1,5 +1,5 @@
 import { afterEach, describe, expect, it } from 'vitest';
-import { get, set } from './storage';
+import { get, set } from '../src/storage';
 
 function fakeStorage(overrides: Partial<Storage> = {}): Storage {
   const data = new Map<string, string>();
