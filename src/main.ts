@@ -28,3 +28,10 @@ document.addEventListener('visibilitychange', () => {
     }
   }
 });
+
+// Expose the game instance for Playwright e2e tests (see e2e/). `import.meta.env.DEV`
+// is replaced at build time, so this branch — and the reference to `game` — is dropped
+// from production builds entirely; it never ships.
+if (import.meta.env.DEV) {
+  (window as Window & { __game?: Phaser.Game }).__game = game;
+}

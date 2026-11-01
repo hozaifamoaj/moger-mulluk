@@ -21,7 +21,8 @@ export class MenuScene extends Phaser.Scene {
         padding: { x: 24, y: 12 },
       })
       .setOrigin(0.5)
-      .setInteractive({ useHandCursor: true });
+      .setInteractive({ useHandCursor: true })
+      .setName('play-button');
 
     playButton.on('pointerup', () => this.scene.start('Game'));
   }
