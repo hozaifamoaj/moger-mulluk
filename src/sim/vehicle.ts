@@ -1,7 +1,18 @@
 import type { Input, PlayerVehicleState, VehicleConfig } from './types';
-import { STEERING } from './config';
+import { STEERING, VEHICLE_COLLISION } from './config';
 
 const DEG_TO_RAD = Math.PI / 180;
+
+/**
+ * §8: below 50% health, top speed drops by 20%. `config.health` is the
+ * vehicle's starting (max) health, so `health / config.health` is the
+ * current fraction.
+ */
+export function applyHealthPenalty(config: VehicleConfig, health: number): VehicleConfig {
+  const fraction = health / config.health;
+  if (fraction >= VEHICLE_COLLISION.lowHealthThreshold) return config;
+  return { ...config, maxSpeed: config.maxSpeed * VEHICLE_COLLISION.lowHealthSpeedMultiplier };
+}
 
 /**
  * §4.3 Movement: steering weakens as speed rises, and a vehicle cannot turn
