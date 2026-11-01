@@ -66,9 +66,8 @@ export const COLLISION = {
   kerbCooldownSeconds: 0.5, // between health-affecting kerb/divider hits
 } as const;
 
-// §5.2 Traffic rules by type — car and bus only (M3 scope). Car width/length
-// match VEHICLES.car exactly, per the spec's own table. Bus dwell-at-bus-stop
-// behaviour needs map data (M4) and isn't modelled yet.
+// §5.2 Traffic rules by type. Car width/length match VEHICLES.car exactly,
+// per the spec's own table.
 export const TRAFFIC = {
   car: {
     id: 'car',
@@ -83,6 +82,37 @@ export const TRAFFIC = {
     speedMax: 200, // px/s
     width: 60, // px
     length: 150, // px
+  },
+  rickshaw: {
+    id: 'rickshaw',
+    speedMin: 60, // px/s
+    speedMax: 80, // px/s
+    width: 28, // px
+    length: 50, // px
+  },
+  cng: {
+    id: 'cng',
+    speedMin: 180, // px/s
+    speedMax: 230, // px/s
+    width: 32, // px
+    length: 56, // px
+  },
+  motorcycle: {
+    id: 'motorcycle',
+    speedMin: 280, // px/s
+    speedMax: 340, // px/s
+    width: 14, // px
+    length: 40, // px
+  },
+  // §5.2: "Car or CNG size" — car size picked as the deterministic default.
+  // TODO(tune): no rule is given for which map-placed parked vehicles use
+  // which size; revisit once a real map wants to mix the two.
+  parked: {
+    id: 'parked',
+    speedMin: 0, // px/s
+    speedMax: 0, // px/s
+    width: 36, // px
+    length: 72, // px
   },
 } as const;
 
@@ -107,17 +137,71 @@ export const CAR_SIDEWAYS_SHIFT = {
   maxTriggerDistance: 2000, // px
 } as const;
 
-// §5.3 Spawning and density. No per-segment spawn table exists until M4, so
-// M3 uses one flat target pool size and a car:bus mix.
-// TODO(tune): both the density level and the car:bus ratio are guesses
-// pending real segment data and playtesting.
+// §5.3 Spawning and density. Per-segment spawn tables (§7.3) now drive type
+// mix and target count; this holds only the parts that aren't per-segment.
 export const SPAWN = {
-  targetActiveCount: 16, // §5.3 "medium" density
-  carRatio: 2 / 3, // ~2:1 car:bus mix
-  poolCapacity: 40, // fixed pool size; must exceed targetActiveCount with margin
+  poolCapacity: 60, // fixed pool size; must exceed the busiest segment's target plus parked vehicles and cluster overshoot, with margin
   aheadOfPlayerDistance: 1600, // px: far edge of the spawn window ahead of the player
   offscreenSpawnDistance: 900, // px: steady-state spawns stay beyond ~896px visible (DISPLAY.height * 0.7), so nothing pops into view
   behindPlayerDespawnDistance: 600, // px: despawn once this far behind the player
+} as const;
+
+// §5.4: junctions and bus stops marked as jam zones cap traffic speed.
+export const JAM = {
+  speedCap: 60, // px/s
+} as const;
+
+// §5.2: buses stop for a rolled duration at each bus-stop zone.
+export const BUS_STOP = {
+  minDwellSeconds: 3,
+  maxDwellSeconds: 6,
+} as const;
+
+// §5.2: rickshaw continuous sideways drift, a sine wave around a fixed base x.
+export const RICKSHAW_DRIFT = {
+  amplitude: 12, // px
+  period: 3, // seconds per full wave
+} as const;
+
+// §5.2: motorcycle continuous weave. TODO(tune): the spec says "weaves along
+// preset offsets" but gives no amplitude or period; modelled as the same
+// kind of sine drift as the rickshaw, with a smaller, faster wave.
+export const MOTORCYCLE_WEAVE = {
+  amplitude: 25, // px
+  period: 2.5, // seconds per full wave
+} as const;
+
+// §5.2: inside a map wrongWay zone, motorcycles travel against traffic,
+// toward the player, at this fixed speed (not their own speedMin–speedMax).
+export const MOTORCYCLE_WRONG_WAY = {
+  speed: 200, // px/s
+} as const;
+
+// §5.2: CNG scripted-point cut-in. §7.3's segment data has no scripted-point
+// feature type, so — same placeholder approach as CAR_SIDEWAYS_SHIFT — each
+// spawned CNG independently rolls a forward-travel trigger distance via the
+// seeded RNG. At trigger, unlike the car's pre-rolled magnitude/side, it
+// searches `offsets` (nearest first) for the first side clear to cut into.
+// TODO(tune): replaced by real per-segment scripted points once that map
+// data format exists.
+export const CNG_CUTIN = {
+  minTriggerDistance: 400, // px
+  maxTriggerDistance: 2000, // px
+  offsets: [-30, 30, -60, 60] as readonly number[], // px, nearest-first
+} as const;
+
+// §5.2: rickshaws spawn in clusters rather than individually.
+export const RICKSHAW_CLUSTER = {
+  minSize: 2,
+  maxSize: 4,
+  spacing: 40, // px gap beyond each rickshaw's own length between cluster members
+} as const;
+
+// §7.3 map-placed parked vehicles: clearance from the kerb/divider line, and
+// spacing between consecutive vehicles within the same `parked` feature.
+export const MAP_PLACEMENT = {
+  parkedMargin: 10, // px
+  parkedSpacing: 10, // px
 } as const;
 
 // §8 / §8.1 Vehicle-vs-vehicle collision (player vs traffic only — traffic

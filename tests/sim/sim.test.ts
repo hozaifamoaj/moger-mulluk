@@ -1,7 +1,10 @@
 import { describe, expect, it } from 'vitest';
 import { Sim } from '../../src/sim/sim';
-import { SIM, SPAWN } from '../../src/sim/config';
+import { SIM } from '../../src/sim/config';
+import { createDefaultTestMap } from '../../src/sim/map';
 import type { Input } from '../../src/sim/types';
+
+const map = createDefaultTestMap();
 
 function rectsOverlap(
   a: { x: number; y: number; width: number; length: number },
@@ -24,8 +27,8 @@ function inputAt(step: number): Input {
 
 describe('Sim', () => {
   it('produces an identical final state for the same seed and input sequence', () => {
-    const a = new Sim(42, 10000);
-    const b = new Sim(42, 10000);
+    const a = new Sim(42, map, 10000);
+    const b = new Sim(42, map, 10000);
 
     for (let i = 0; i < 500; i++) {
       a.step(SIM.stepSeconds, inputAt(i));
@@ -36,26 +39,26 @@ describe('Sim', () => {
   });
 
   it('starts the player centered in the player carriageway, at the given startY', () => {
-    const sim = new Sim(1, 5000);
+    const sim = new Sim(1, map, 5000);
     expect(sim.state.player.y).toBe(5000);
     expect(sim.state.stepCount).toBe(0);
   });
 
   it('advances stepCount and elapsedSeconds on each step', () => {
-    const sim = new Sim(1, 0);
+    const sim = new Sim(1, map, 0);
     sim.step(SIM.stepSeconds, { throttle: 0, brake: 0, steer: 0, horn: false });
     expect(sim.state.stepCount).toBe(1);
     expect(sim.state.elapsedSeconds).toBeCloseTo(SIM.stepSeconds, 10);
   });
 
   it('fills the traffic pool to the target density on construction', () => {
-    const sim = new Sim(1, 10000);
+    const sim = new Sim(1, map, 10000);
     const active = sim.state.traffic.filter((v) => v.active);
-    expect(active.length).toBe(SPAWN.targetActiveCount);
+    expect(active.length).toBe(map.targetActiveCountAt(10000));
   });
 
   it('never lets two active traffic vehicles overlap, across many steps and spawns', () => {
-    const sim = new Sim(123, 50000);
+    const sim = new Sim(123, map, 50000);
     const input: Input = { throttle: 1, brake: 0, steer: 0, horn: false };
 
     for (let i = 0; i < 2000; i++) {
@@ -70,7 +73,7 @@ describe('Sim', () => {
   });
 
   it('keeps the traffic pool topped up as vehicles despawn behind the player', () => {
-    const sim = new Sim(55, 50000);
+    const sim = new Sim(55, map, 50000);
     const input: Input = { throttle: 1, brake: 0, steer: 0, horn: false };
 
     for (let i = 0; i < 3000; i++) {
@@ -78,6 +81,6 @@ describe('Sim', () => {
     }
 
     const active = sim.state.traffic.filter((v) => v.active);
-    expect(active.length).toBe(SPAWN.targetActiveCount);
+    expect(active.length).toBe(map.targetActiveCountAt(sim.state.player.y));
   });
 });

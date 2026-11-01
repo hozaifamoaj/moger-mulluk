@@ -1,15 +1,26 @@
 import { describe, expect, it } from 'vitest';
-import { resolveRoadContact, resolveVehicleCollisions } from '../../src/sim/collision';
+import { resolveRoadContact, resolveVehicleCollisions, detectFine } from '../../src/sim/collision';
 import { computeRoadEdges } from '../../src/sim/road';
+import { RouteMap, createDefaultTestMap } from '../../src/sim/map';
 import { VEHICLES, COLLISION, SIM, VEHICLE_COLLISION } from '../../src/sim/config';
 import type { PlayerVehicleState, TrafficVehicleState } from '../../src/sim/types';
 
 const car = VEHICLES.car;
 const dt = SIM.stepSeconds;
 const edges = computeRoadEdges();
+const map = createDefaultTestMap();
 
 function stateAt(x: number, overrides: Partial<PlayerVehicleState> = {}): PlayerVehicleState {
-  return { x, y: 0, heading: 0, speed: car.maxSpeed * 0.5, health: car.health, kerbCooldown: 0, ...overrides };
+  return {
+    x,
+    y: 0,
+    heading: 0,
+    speed: car.maxSpeed * 0.5,
+    health: car.health,
+    kerbCooldown: 0,
+    fineActive: false,
+    ...overrides,
+  };
 }
 
 describe('resolveRoadContact', () => {
@@ -18,7 +29,7 @@ describe('resolveRoadContact', () => {
     const state = stateAt(intrudingX);
     const preSpeed = state.speed;
 
-    const { state: next, events } = resolveRoadContact(state, car, dt);
+    const { state: next, events } = resolveRoadContact(state, car, dt, map);
 
     expect(next.x - car.width / 2).toBeCloseTo(edges.footpathPlayerRightX, 5);
     expect(next.speed).toBeCloseTo(preSpeed * COLLISION.kerbSpeedMultiplier, 5);
@@ -26,23 +37,67 @@ describe('resolveRoadContact', () => {
     expect(next.health).toBe(car.health - COLLISION.kerbHealthLoss);
   });
 
-  it('pushes the car back onto the road and halves speed on divider contact', () => {
+  it('pushes the car back onto the road and halves speed on divider contact outside a gap', () => {
     const intrudingX = edges.dividerLeftX - car.width / 2 + 5; // 5px over the divider line
     const state = stateAt(intrudingX);
     const preSpeed = state.speed;
 
-    const { state: next, events } = resolveRoadContact(state, car, dt);
+    const { state: next, events } = resolveRoadContact(state, car, dt, map);
 
     expect(next.x + car.width / 2).toBeCloseTo(edges.dividerLeftX, 5);
     expect(next.speed).toBeCloseTo(preSpeed * COLLISION.kerbSpeedMultiplier, 5);
     expect(events).toContainEqual({ type: 'dividerContact', healthLost: COLLISION.kerbHealthLoss });
   });
 
+  it('lets the car cross the divider, untouched, inside a mapped dividerGap', () => {
+    const gapMap = new RouteMap([
+      {
+        id: 'gap-test',
+        length: 20000,
+        lanes: 3,
+        divider: true,
+        density: 'low',
+        spawn: {},
+        features: [{ type: 'dividerGap', at: 10000, length: 200 }],
+      },
+    ]);
+    const intrudingX = edges.dividerLeftX + 20; // well past the divider, onto the wrong side
+    const state = stateAt(intrudingX, { y: 10000 });
+
+    const { state: next, events } = resolveRoadContact(state, car, dt, gapMap);
+
+    expect(next.x).toBe(state.x);
+    expect(events).toHaveLength(0);
+  });
+
+  it('pushes the car back off the opposite-side footpath (right kerb wall)', () => {
+    const intrudingX = edges.footpathOppositeLeftX + car.width / 2 - 5; // 5px over the right kerb line
+    const gapMap = new RouteMap([
+      {
+        id: 'gap-test',
+        length: 20000,
+        lanes: 3,
+        divider: true,
+        density: 'low',
+        spawn: {},
+        features: [{ type: 'dividerGap', at: 10000, length: 20000 }],
+      },
+    ]);
+    const state = stateAt(intrudingX, { y: 10000 });
+    const preSpeed = state.speed;
+
+    const { state: next, events } = resolveRoadContact(state, car, dt, gapMap);
+
+    expect(next.x + car.width / 2).toBeCloseTo(edges.footpathOppositeLeftX, 5);
+    expect(next.speed).toBeCloseTo(preSpeed * COLLISION.kerbSpeedMultiplier, 5);
+    expect(events).toContainEqual({ type: 'kerbContact', healthLost: COLLISION.kerbHealthLoss });
+  });
+
   it('does not deduct health when speed is below the 30% threshold', () => {
     const intrudingX = edges.footpathPlayerRightX + car.width / 2 - 5;
     const state = stateAt(intrudingX, { speed: car.maxSpeed * COLLISION.kerbHealthSpeedThreshold * 0.5 });
 
-    const { state: next, events } = resolveRoadContact(state, car, dt);
+    const { state: next, events } = resolveRoadContact(state, car, dt, map);
 
     expect(next.health).toBe(car.health);
     expect(events).toContainEqual({ type: 'kerbContact', healthLost: 0 });
@@ -50,7 +105,7 @@ describe('resolveRoadContact', () => {
 
   it('does not deduct health again inside the cooldown window', () => {
     const intrudingX = edges.footpathPlayerRightX + car.width / 2 - 5;
-    const first = resolveRoadContact(stateAt(intrudingX), car, dt);
+    const first = resolveRoadContact(stateAt(intrudingX), car, dt, map);
     expect(first.state.health).toBe(car.health - COLLISION.kerbHealthLoss);
 
     // Simulate the car still being steered into the kerb on the next step
@@ -61,16 +116,66 @@ describe('resolveRoadContact', () => {
       health: first.state.health,
       kerbCooldown: first.state.kerbCooldown,
     };
-    const second = resolveRoadContact(stillIntruding, car, dt);
+    const second = resolveRoadContact(stillIntruding, car, dt, map);
     expect(second.state.health).toBe(first.state.health);
     expect(second.events).toContainEqual({ type: 'kerbContact', healthLost: 0 });
   });
 
   it('leaves the car untouched when it is fully on the carriageway', () => {
     const state = stateAt((edges.footpathPlayerRightX + edges.dividerLeftX) / 2);
-    const { state: next, events } = resolveRoadContact(state, car, dt);
+    const { state: next, events } = resolveRoadContact(state, car, dt, map);
     expect(next.x).toBe(state.x);
     expect(next.speed).toBe(state.speed);
+    expect(events).toHaveLength(0);
+  });
+});
+
+describe('detectFine', () => {
+  const policeMap = new RouteMap([
+    {
+      id: 'police-test',
+      length: 20000,
+      lanes: 3,
+      divider: true,
+      density: 'low',
+      spawn: {},
+      features: [{ type: 'police', from: 5000, to: 15000 }],
+    },
+  ]);
+
+  it('fires a fine once on entering a wrong-side violation inside a police zone', () => {
+    const onWrongSide = stateAt(edges.dividerLeftX + 20, { y: 10000 });
+
+    const { fineActive, events } = detectFine(onWrongSide, car, policeMap);
+
+    expect(fineActive).toBe(true);
+    expect(events).toContainEqual({ type: 'fine', healthLost: 0, fineReason: 'wrongSide' });
+  });
+
+  it('does not re-fire while the violation holds (debounced via fineActive)', () => {
+    const stillOnWrongSide = stateAt(edges.dividerLeftX + 20, { y: 10000, fineActive: true });
+
+    const { fineActive, events } = detectFine(stillOnWrongSide, car, policeMap);
+
+    expect(fineActive).toBe(true);
+    expect(events).toHaveLength(0);
+  });
+
+  it('does not fire outside a police zone, even on the wrong side', () => {
+    const onWrongSide = stateAt(edges.dividerLeftX + 20, { y: 500 }); // outside the 5000-15000 zone
+
+    const { fineActive, events } = detectFine(onWrongSide, car, policeMap);
+
+    expect(fineActive).toBe(false);
+    expect(events).toHaveLength(0);
+  });
+
+  it('does not fire fully on the carriageway, even inside a police zone', () => {
+    const onRoad = stateAt((edges.footpathPlayerRightX + edges.dividerLeftX) / 2, { y: 10000 });
+
+    const { fineActive, events } = detectFine(onRoad, car, policeMap);
+
+    expect(fineActive).toBe(false);
     expect(events).toHaveLength(0);
   });
 });
@@ -87,6 +192,9 @@ function trafficAt(x: number, overrides: Partial<TrafficVehicleState> = {}): Tra
     length: 72,
     stopTimer: 0,
     sidewaysShift: null,
+    drift: null,
+    direction: 1,
+    lastBusStopY: null,
     nearMissGiven: false,
     ...overrides,
   };

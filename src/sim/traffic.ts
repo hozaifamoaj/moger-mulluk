@@ -1,5 +1,7 @@
 import type { TrafficVehicleState } from './types';
-import { SPAWN, TRAFFIC_RULES } from './config';
+import type { RouteMap } from './map';
+import type { Rng } from './rng';
+import { SPAWN, TRAFFIC_RULES, JAM, BUS_STOP, RICKSHAW_DRIFT, MOTORCYCLE_WEAVE, CNG_CUTIN } from './config';
 
 /** A fixed-size pool of inactive slots; the spawner activates/reuses them (CLAUDE.md rule 10). */
 export function createTrafficPool(): TrafficVehicleState[] {
@@ -14,6 +16,9 @@ export function createTrafficPool(): TrafficVehicleState[] {
     length: 0,
     stopTimer: 0,
     sidewaysShift: null,
+    drift: null,
+    direction: 1 as const,
+    lastBusStopY: null,
     nearMissGiven: false,
   }));
 }
@@ -60,19 +65,28 @@ function approach(current: number, target: number, maxDelta: number): number {
 /**
  * §5.1 / §5.2: advances every active traffic vehicle one fixed step —
  * keep-distance against whatever is ahead (traffic or the player), forward
- * movement, and the car-only sideways shift. Mutates `traffic` in place
- * (rule 10: no hot-path allocation for pooled entities).
+ * movement, the car/CNG sideways shift, rickshaw/motorcycle drift, the jam
+ * speed cap, and bus-stop dwell. Mutates `traffic` in place (rule 10: no
+ * hot-path allocation for pooled entities).
  *
  * `traffic` must already be processed in ascending-y order by the caller so
- * that "ahead" neighbours have already been finalised this step.
+ * that "ahead" neighbours have already been finalised this step. Wrong-way
+ * motorcycles (direction === -1) are a deliberate exception: per the
+ * architecture note in docs/progress.md, they move in a straight line
+ * toward the player and are never added to `alreadyMoved`, so they don't
+ * disturb that ascending-y invariant and other traffic doesn't react to
+ * them (no AI, rule 9 — only the player's own collision check sees them).
  */
 export function stepTraffic(
   traffic: TrafficVehicleState[],
   sortedAscendingByY: number[], // indices into `traffic`, ahead-first
   player: Obstacle,
   dt: number,
+  map: RouteMap,
+  rng: Rng,
 ): void {
   const alreadyMoved: Obstacle[] = [];
+  const maxDelta = TRAFFIC_RULES.keepDistanceMaxDecel * dt;
 
   for (const index of sortedAscendingByY) {
     const vehicle = traffic[index];
@@ -80,17 +94,25 @@ export function stepTraffic(
     if (vehicle.stopTimer > 0) {
       vehicle.stopTimer = Math.max(0, vehicle.stopTimer - dt);
       vehicle.speed = 0;
-      alreadyMoved.push(vehicle);
+      if (vehicle.direction === 1) alreadyMoved.push(vehicle);
       continue;
     }
 
-    const candidates: Obstacle[] = player.y < vehicle.y ? [...alreadyMoved, player] : alreadyMoved;
+    if (vehicle.direction === -1) {
+      vehicle.speed = approach(vehicle.speed, vehicle.cruiseSpeed, maxDelta);
+      vehicle.y += vehicle.speed * dt;
+      continue;
+    }
+
+    const candidates: Obstacle[] = [...alreadyMoved, player];
     const ahead = findAheadObstacle(vehicle, candidates);
 
-    const maxDelta = TRAFFIC_RULES.keepDistanceMaxDecel * dt;
+    const jamCappedTarget = map.jamSpeedCapAt(vehicle.y)
+      ? Math.min(vehicle.cruiseSpeed, JAM.speedCap)
+      : vehicle.cruiseSpeed;
     vehicle.speed = ahead
       ? approach(vehicle.speed, Math.max(ahead.speed, 0), maxDelta)
-      : approach(vehicle.speed, vehicle.cruiseSpeed, maxDelta);
+      : approach(vehicle.speed, jamCappedTarget, maxDelta);
 
     let newY = vehicle.y - vehicle.speed * dt;
 
@@ -103,9 +125,23 @@ export function stepTraffic(
     }
 
     vehicle.y = newY;
+    applyDrift(vehicle, dt);
     applySidewaysShift(vehicle, traffic, player, dt);
+    maybeTriggerBusStop(vehicle, map, rng);
+
     alreadyMoved.push(vehicle);
   }
+}
+
+// §5.2: rickshaw ±12px/3s wave, motorcycle weave — a continuous sine drift
+// around a fixed base x, independent of the one-shot sideways shift below.
+function applyDrift(vehicle: TrafficVehicleState, dt: number): void {
+  const drift = vehicle.drift;
+  if (!drift) return;
+
+  drift.phase += dt;
+  const config = vehicle.type === 'rickshaw' ? RICKSHAW_DRIFT : MOTORCYCLE_WEAVE;
+  vehicle.x = drift.baseX + config.amplitude * Math.sin((2 * Math.PI * drift.phase) / config.period);
 }
 
 function applySidewaysShift(
@@ -121,7 +157,16 @@ function applySidewaysShift(
     shift.remainingTriggerDistance -= Math.abs(vehicle.speed) * dt;
     if (shift.remainingTriggerDistance > 0) return;
 
-    if (!clearForShift(vehicle, shift.side, shift.magnitude, traffic, player)) {
+    if (vehicle.type === 'cng') {
+      // §5.2: CNG cuts into the nearest clear gap, rather than a pre-rolled one.
+      const gap = pickClearGap(vehicle, CNG_CUTIN.offsets, traffic, player);
+      if (!gap) {
+        vehicle.sidewaysShift = null;
+        return;
+      }
+      shift.side = gap.side;
+      shift.magnitude = gap.magnitude;
+    } else if (!clearForShift(vehicle, shift.side, shift.magnitude, traffic, player)) {
       vehicle.sidewaysShift = null; // §5.1 rule 3: skipped, not retried, when blocked
       return;
     }
@@ -135,6 +180,22 @@ function applySidewaysShift(
   if (shift.progress >= shift.magnitude) {
     vehicle.sidewaysShift = null;
   }
+}
+
+function pickClearGap(
+  vehicle: TrafficVehicleState,
+  offsets: readonly number[],
+  traffic: readonly TrafficVehicleState[],
+  player: Obstacle,
+): { side: -1 | 1; magnitude: number } | null {
+  for (const offset of offsets) {
+    const side: -1 | 1 = offset < 0 ? -1 : 1;
+    const magnitude = Math.abs(offset);
+    if (clearForShift(vehicle, side, magnitude, traffic, player)) {
+      return { side, magnitude };
+    }
+  }
+  return null;
 }
 
 // §5.1 rule 3: the target space must be clear for the vehicle's length plus
@@ -167,4 +228,19 @@ function clearForShift(
   }
 
   return true;
+}
+
+// §5.2/§5.4: buses dwell 3–6s the first time they reach a bus-stop zone.
+// `lastBusStopY` prevents re-triggering every step the bus is stopped there.
+function maybeTriggerBusStop(vehicle: TrafficVehicleState, map: RouteMap, rng: Rng): void {
+  if (vehicle.type !== 'bus') return;
+
+  for (const stopY of map.busStops) {
+    if (vehicle.lastBusStopY === stopY) continue;
+    if (vehicle.y <= stopY) {
+      vehicle.stopTimer = rng.range(BUS_STOP.minDwellSeconds, BUS_STOP.maxDwellSeconds);
+      vehicle.lastBusStopY = stopY;
+      return;
+    }
+  }
 }

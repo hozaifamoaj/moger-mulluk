@@ -13,8 +13,12 @@ export interface RoadEdges {
   roadRightX: number;
 }
 
-export function computeRoadEdges(): RoadEdges {
-  const playerCarriagewayWidth = ROAD.laneWidth * ROAD.playerLanes;
+// `playerLanes` defaults to ROAD.playerLanes (the M2/M3 straight-road
+// prototype); M4 map segments pass their own lane count (2 or 3, for the
+// 3-to-2-lane merge in §7.2) so both sim and presentation agree on the
+// narrowed cross-section.
+export function computeRoadEdges(playerLanes: number = ROAD.playerLanes): RoadEdges {
+  const playerCarriagewayWidth = ROAD.laneWidth * playerLanes;
   const oppositeCarriagewayWidth = ROAD.laneWidth * ROAD.oppositeLanes;
   const roadWidth =
     ROAD.footpathWidth * 2 + playerCarriagewayWidth + ROAD.dividerWidth + oppositeCarriagewayWidth;

@@ -7,7 +7,7 @@ const car = VEHICLES.car;
 const dt = SIM.stepSeconds;
 
 function freshState(overrides: Partial<PlayerVehicleState> = {}): PlayerVehicleState {
-  return { x: 0, y: 0, heading: 0, speed: 0, health: car.health, kerbCooldown: 0, ...overrides };
+  return { x: 0, y: 0, heading: 0, speed: 0, health: car.health, kerbCooldown: 0, fineActive: false, ...overrides };
 }
 
 const noInput: Input = { throttle: 0, brake: 0, steer: 0, horn: false };

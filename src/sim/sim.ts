@@ -1,10 +1,12 @@
 import type { Input, SimEvent, SimState, TrafficVehicleState } from './types';
+import type { RouteMap } from './map';
 import { VEHICLES } from './config';
 import { stepVehicle, applyHealthPenalty } from './vehicle';
-import { resolveRoadContact, resolveVehicleCollisions, detectNearMisses } from './collision';
+import { resolveRoadContact, resolveVehicleCollisions, detectNearMisses, detectFine } from './collision';
 import { computeRoadEdges } from './road';
+import { createDefaultTestMap } from './map';
 import { createTrafficPool, stepTraffic } from './traffic';
-import { despawnBehindPlayer, fillInitialTraffic, spawnTraffic } from './spawner';
+import { despawnBehindPlayer, fillInitialTraffic, placeParkedVehicles, spawnTraffic } from './spawner';
 import { Rng } from './rng';
 
 /**
@@ -20,22 +22,25 @@ export class Sim {
   // `readonly`); traffic/spawner/collision code mutates slots in place
   // rather than reallocating (rule 10).
   private readonly _traffic: TrafficVehicleState[];
+  private readonly _map: RouteMap;
   private _state: SimState;
 
-  constructor(seed: number, startY: number = 0) {
+  constructor(seed: number, map: RouteMap = createDefaultTestMap(), startY: number = map.totalLength) {
     this._seed = seed;
     this._rng = new Rng(seed);
+    this._map = map;
 
-    const edges = computeRoadEdges();
+    const edges = computeRoadEdges(map.laneCountAt(startY));
     const startX = (edges.footpathPlayerRightX + edges.dividerLeftX) / 2;
 
     this._traffic = createTrafficPool();
-    fillInitialTraffic(this._traffic, this._rng, {
-      x: startX,
-      y: startY,
-      width: VEHICLES.car.width,
-      length: VEHICLES.car.length,
-    });
+    placeParkedVehicles(this._traffic, map);
+    fillInitialTraffic(
+      this._traffic,
+      this._rng,
+      { x: startX, y: startY, width: VEHICLES.car.width, length: VEHICLES.car.length },
+      map,
+    );
 
     this._state = {
       stepCount: 0,
@@ -47,6 +52,7 @@ export class Sim {
         speed: 0,
         health: VEHICLES.car.health,
         kerbCooldown: 0,
+        fineActive: false,
       },
       traffic: this._traffic,
       invulnerability: 0,
@@ -65,7 +71,12 @@ export class Sim {
   step(dt: number, input: Input): SimEvent[] {
     const effectiveConfig = applyHealthPenalty(VEHICLES.car, this._state.player.health);
     const movedPlayer = stepVehicle(this._state.player, input, effectiveConfig, dt);
-    const { state: playerAfterRoad, events: roadEvents } = resolveRoadContact(movedPlayer, VEHICLES.car, dt);
+    const { state: playerAfterRoad, events: roadEvents } = resolveRoadContact(
+      movedPlayer,
+      VEHICLES.car,
+      dt,
+      this._map,
+    );
 
     const activeIndices: number[] = [];
     for (let i = 0; i < this._traffic.length; i++) {
@@ -78,6 +89,8 @@ export class Sim {
       activeIndices,
       { x: playerAfterRoad.x, y: playerAfterRoad.y, width: VEHICLES.car.width, length: VEHICLES.car.length, speed: playerAfterRoad.speed },
       dt,
+      this._map,
+      this._rng,
     );
 
     const {
@@ -93,23 +106,26 @@ export class Sim {
       this._state.nearMissCount,
     );
 
-    despawnBehindPlayer(this._traffic, playerAfterCollision.y);
-    spawnTraffic(this._traffic, this._rng, {
-      x: playerAfterCollision.x,
-      y: playerAfterCollision.y,
-      width: VEHICLES.car.width,
-      length: VEHICLES.car.length,
-    });
+    const { fineActive, events: fineEvents } = detectFine(playerAfterCollision, VEHICLES.car, this._map);
+    const playerAfterFine = { ...playerAfterCollision, fineActive };
+
+    despawnBehindPlayer(this._traffic, playerAfterFine.y);
+    spawnTraffic(
+      this._traffic,
+      this._rng,
+      { x: playerAfterFine.x, y: playerAfterFine.y, width: VEHICLES.car.width, length: VEHICLES.car.length },
+      this._map,
+    );
 
     this._state = {
       stepCount: this._state.stepCount + 1,
       elapsedSeconds: this._state.elapsedSeconds + dt,
-      player: playerAfterCollision,
+      player: playerAfterFine,
       traffic: this._traffic,
       invulnerability,
       nearMissCount,
     };
 
-    return [...roadEvents, ...collisionEvents, ...nearMissEvents];
+    return [...roadEvents, ...collisionEvents, ...nearMissEvents, ...fineEvents];
   }
 }

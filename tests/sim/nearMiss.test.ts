@@ -13,6 +13,7 @@ function playerAt(x: number, overrides: Partial<PlayerVehicleState> = {}): Playe
     speed: car.maxSpeed * (NEAR_MISS.speedThreshold + 0.1),
     health: car.health,
     kerbCooldown: 0,
+    fineActive: false,
     ...overrides,
   };
 }
@@ -29,6 +30,9 @@ function trafficAt(x: number, overrides: Partial<TrafficVehicleState> = {}): Tra
     length: 72,
     stopTimer: 0,
     sidewaysShift: null,
+    drift: null,
+    direction: 1,
+    lastBusStopY: null,
     nearMissGiven: false,
     ...overrides,
   };

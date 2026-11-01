@@ -1,0 +1,59 @@
+[
+  {
+    "id": "demo-start",
+    "length": 3000,
+    "lanes": 3,
+    "divider": true,
+    "density": "medium",
+    "spawn": { "car": 4, "bus": 2, "cng": 2 },
+    "features": [
+      { "type": "busStop", "at": 1200 },
+      { "type": "jam", "from": 1000, "to": 1600 }
+    ]
+  },
+  {
+    "id": "demo-merge",
+    "length": 2000,
+    "lanes": 2,
+    "divider": true,
+    "density": "high",
+    "spawn": { "car": 3, "rickshaw": 3, "motorcycle": 2 },
+    "features": []
+  },
+  {
+    "id": "demo-hazards",
+    "length": 4000,
+    "lanes": 3,
+    "divider": true,
+    "density": "high",
+    "spawn": { "car": 3, "cng": 2, "rickshaw": 2 },
+    "features": [
+      { "type": "crossing", "at": 2000, "overbridge": true },
+      { "type": "parked", "at": 2500, "side": "left", "count": 2 },
+      { "type": "dividerGap", "at": 1500, "length": 120 },
+      { "type": "police", "from": 1000, "to": 3000 }
+    ]
+  },
+  {
+    "id": "demo-junction",
+    "length": 3000,
+    "lanes": 3,
+    "divider": true,
+    "density": "high",
+    "spawn": { "car": 2, "rickshaw": 4, "motorcycle": 2 },
+    "features": [
+      { "type": "wrongWay", "from": 500, "to": 2000 },
+      { "type": "jam", "from": 0, "to": 1000 },
+      { "type": "parked", "at": 2500, "side": "right", "count": 2 }
+    ]
+  },
+  {
+    "id": "demo-finish",
+    "length": 2000,
+    "lanes": 3,
+    "divider": true,
+    "density": "low",
+    "spawn": { "car": 3, "bus": 1 },
+    "features": []
+  }
+]

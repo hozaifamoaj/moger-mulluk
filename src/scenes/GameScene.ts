@@ -2,8 +2,11 @@ import Phaser from 'phaser';
 import { DISPLAY, ROAD, SIM, VEHICLES, VEHICLE_COLLISION } from '../sim/config';
 import { computeRoadEdges } from '../sim/road';
 import { Sim } from '../sim/sim';
+import { RouteMap, validateSegments } from '../sim/map';
 import { KeyboardInput } from '../ui/KeyboardInput';
-import type { SimEvent } from '../sim/types';
+import type { SimEvent, TrafficVehicleType } from '../sim/types';
+
+const MAP_URL = 'assets/maps/m4-demo.json';
 
 // Greybox placeholder colors (rule 13: replaced by sprites in M9). Sizes and
 // positions come from src/sim/config.ts, not from these.
@@ -15,10 +18,15 @@ const COLORS = {
   car: 0xe0e0e0,
   trafficCar: 0x5588ff,
   trafficBus: 0xffaa33,
+  trafficRickshaw: 0x33cc88,
+  trafficCng: 0x33cccc,
+  trafficMotorcycle: 0xff5577,
+  trafficParked: 0x888888,
   healthBarBg: 0x222222,
   healthBarFill: 0x55cc55,
   healthBarFillLow: 0xcc5555,
   nearMissText: '#ffee66',
+  fineText: '#ff6666',
 } as const;
 const LANE_MARKING = { dash: 40, gap: 40, width: 3 } as const;
 const CAMERA_PLAYER_SCREEN_FRACTION = 0.7; // §build-plan M2: car sits at ~70% of screen height
@@ -32,6 +40,7 @@ const CONTROLS_HINT_TEXT = 'W/↑ Gas   S/↓ Brake   A/D or ←/→ Steer   Spa
 
 export class GameScene extends Phaser.Scene {
   private sim!: Sim;
+  private map!: RouteMap;
   private input_!: KeyboardInput;
   private car!: Phaser.GameObjects.Rectangle;
   private trafficRects!: Phaser.GameObjects.Rectangle[];
@@ -44,9 +53,15 @@ export class GameScene extends Phaser.Scene {
     super('Game');
   }
 
+  preload(): void {
+    this.load.json('map', MAP_URL);
+  }
+
   create(): void {
+    this.map = this.loadMap();
+
     const seed = Date.now();
-    this.sim = new Sim(seed, ROAD.length);
+    this.sim = new Sim(seed, this.map);
     this.input_ = new KeyboardInput(this);
 
     this.drawRoad();
@@ -110,15 +125,16 @@ export class GameScene extends Phaser.Scene {
 
   private handleEvents(events: SimEvent[]): void {
     for (const event of events) {
-      if (event.type === 'nearMiss') this.showNearMissText();
+      if (event.type === 'nearMiss') this.showFloatingText('Near miss!', COLORS.nearMissText);
+      if (event.type === 'fine') this.showFloatingText('Fine!', COLORS.fineText);
     }
   }
 
-  // §8: floating acknowledgement text for a near miss, tweened up and out.
-  private showNearMissText(): void {
+  // §8 / §9: floating acknowledgement text for a near miss or fine, tweened up and out.
+  private showFloatingText(message: string, color: string): void {
     const { player } = this.sim.state;
     const text = this.add
-      .text(player.x, player.y - VEHICLES.car.length, 'Near miss!', { fontSize: '18px', color: COLORS.nearMissText })
+      .text(player.x, player.y - VEHICLES.car.length, message, { fontSize: '18px', color })
       .setOrigin(0.5)
       .setDepth(900);
 
@@ -169,7 +185,24 @@ export class GameScene extends Phaser.Scene {
 
       rect.setPosition(vehicle.x, vehicle.y);
       rect.setSize(vehicle.width, vehicle.length);
-      rect.setFillStyle(vehicle.type === 'bus' ? COLORS.trafficBus : COLORS.trafficCar);
+      rect.setFillStyle(this.trafficColor(vehicle.type));
+    }
+  }
+
+  private trafficColor(type: TrafficVehicleType): number {
+    switch (type) {
+      case 'bus':
+        return COLORS.trafficBus;
+      case 'rickshaw':
+        return COLORS.trafficRickshaw;
+      case 'cng':
+        return COLORS.trafficCng;
+      case 'motorcycle':
+        return COLORS.trafficMotorcycle;
+      case 'parked':
+        return COLORS.trafficParked;
+      default:
+        return COLORS.trafficCar;
     }
   }
 
@@ -186,27 +219,45 @@ export class GameScene extends Phaser.Scene {
     this.cameras.main.scrollY = this.sim.state.player.y - DISPLAY.height * CAMERA_PLAYER_SCREEN_FRACTION;
   }
 
+  // §7.2/§7.3: each segment draws at its own lane width (e.g. the 3-to-2-lane
+  // merge), using RouteMap.segmentRanges rather than the flat ROAD.length
+  // prototype cross-section.
   private drawRoad(): void {
-    const edges = computeRoadEdges();
     const graphics = this.add.graphics();
 
-    const band = (left: number, right: number, color: number) => {
-      graphics.fillStyle(color, 1);
-      graphics.fillRect(left, 0, right - left, ROAD.length);
-    };
+    for (const { topY, bottomY, segment } of this.map.segmentRanges) {
+      const edges = computeRoadEdges(segment.lanes);
+      const height = topY - bottomY;
 
-    band(edges.roadLeftX, edges.footpathPlayerRightX, COLORS.footpath);
-    band(edges.footpathPlayerRightX, edges.dividerLeftX, COLORS.carriageway);
-    band(edges.dividerLeftX, edges.dividerRightX, COLORS.divider);
-    band(edges.dividerRightX, edges.footpathOppositeLeftX, COLORS.carriageway);
-    band(edges.footpathOppositeLeftX, edges.roadRightX, COLORS.footpath);
+      const band = (left: number, right: number, color: number) => {
+        graphics.fillStyle(color, 1);
+        graphics.fillRect(left, bottomY, right - left, height);
+      };
 
-    graphics.fillStyle(COLORS.laneMarking, 1);
-    for (let lane = 1; lane < ROAD.playerLanes; lane++) {
-      const x = edges.footpathPlayerRightX + ROAD.laneWidth * lane - LANE_MARKING.width / 2;
-      for (let y = 0; y < ROAD.length; y += LANE_MARKING.dash + LANE_MARKING.gap) {
-        graphics.fillRect(x, y, LANE_MARKING.width, LANE_MARKING.dash);
+      band(edges.roadLeftX, edges.footpathPlayerRightX, COLORS.footpath);
+      band(edges.footpathPlayerRightX, edges.dividerLeftX, COLORS.carriageway);
+      band(edges.dividerLeftX, edges.dividerRightX, COLORS.divider);
+      band(edges.dividerRightX, edges.footpathOppositeLeftX, COLORS.carriageway);
+      band(edges.footpathOppositeLeftX, edges.roadRightX, COLORS.footpath);
+
+      graphics.fillStyle(COLORS.laneMarking, 1);
+      for (let lane = 1; lane < segment.lanes; lane++) {
+        const x = edges.footpathPlayerRightX + ROAD.laneWidth * lane - LANE_MARKING.width / 2;
+        for (let y = bottomY; y < topY; y += LANE_MARKING.dash + LANE_MARKING.gap) {
+          graphics.fillRect(x, y, LANE_MARKING.width, LANE_MARKING.dash);
+        }
       }
     }
+  }
+
+  // §7.3: load, parse and validate the map JSON. A throwaway demo map for
+  // M4 (docs/progress.md) — the real Mohakhali-to-Banani route arrives M6.
+  private loadMap(): RouteMap {
+    const raw = this.cache.json.get('map');
+    const result = validateSegments(raw);
+    if (!result.valid) {
+      throw new Error(`Invalid map data (${MAP_URL}): ${result.errors.join('; ')}`);
+    }
+    return new RouteMap(result.segments);
   }
 }

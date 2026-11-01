@@ -1,15 +1,17 @@
-import type { CollisionClass, PlayerVehicleState, SimEvent, TrafficVehicleState, VehicleConfig } from './types';
+import type { CollisionClass, FineReason, PlayerVehicleState, SimEvent, TrafficVehicleState, VehicleConfig } from './types';
+import type { RouteMap } from './map';
 import { COLLISION, NEAR_MISS, VEHICLE_COLLISION } from './config';
 import { computeRoadEdges } from './road';
 import { satOverlap, satOverlapInflated, type RotatedRect } from './sat';
 
 /**
  * §8 / §8.1: kerb and divider contact for the player car. The car cannot
- * mount the kerb, and — since dividerGap map data doesn't exist until M4 —
- * the divider is treated as a solid wall for now, using the same response
- * rule §8.1 specifies for "any vehicle at the divider outside a gap":
- * pushed back onto the road, loses 50% of speed, and loses health only if
- * speed was above 30% of top speed, gated by a shared 0.5s cooldown.
+ * mount the kerb on either side (an unconditional wall at both footpath
+ * edges), and the divider is a solid wall except where the map marks a
+ * dividerGap (§7.3) — inside a gap the car may cross onto the wrong side.
+ * Contact response, per §8.1, for "any vehicle at the kerb/divider outside a
+ * gap": pushed back onto the road, loses 50% of speed, and loses health only
+ * if speed was above 30% of top speed, gated by a shared 0.5s cooldown.
  *
  * Pure function: takes the vehicle state after movement, returns the
  * corrected state plus any events that happened this step.
@@ -18,8 +20,9 @@ export function resolveRoadContact(
   state: PlayerVehicleState,
   config: VehicleConfig,
   dt: number,
+  map: RouteMap,
 ): { state: PlayerVehicleState; events: SimEvent[] } {
-  const edges = computeRoadEdges();
+  const edges = computeRoadEdges(map.laneCountAt(state.y));
   const events: SimEvent[] = [];
 
   const halfWidth = config.width / 2;
@@ -41,17 +44,59 @@ export function resolveRoadContact(
     kerbCooldown = result.kerbCooldown;
   }
 
-  const carRight = x + halfExtentX;
-  if (carRight > edges.dividerLeftX) {
+  if (!map.dividerGapAt(state.y)) {
+    const carRight = x + halfExtentX;
+    if (carRight > edges.dividerLeftX) {
+      const preContactSpeed = speed;
+      x -= carRight - edges.dividerLeftX;
+      speed *= COLLISION.kerbSpeedMultiplier;
+      const result = applyContactDamage('dividerContact', preContactSpeed, config, health, kerbCooldown, events);
+      health = result.health;
+      kerbCooldown = result.kerbCooldown;
+    }
+  }
+
+  const carRightEdge = x + halfExtentX;
+  if (carRightEdge > edges.footpathOppositeLeftX) {
     const preContactSpeed = speed;
-    x -= carRight - edges.dividerLeftX;
+    x -= carRightEdge - edges.footpathOppositeLeftX;
     speed *= COLLISION.kerbSpeedMultiplier;
-    const result = applyContactDamage('dividerContact', preContactSpeed, config, health, kerbCooldown, events);
+    const result = applyContactDamage('kerbContact', preContactSpeed, config, health, kerbCooldown, events);
     health = result.health;
     kerbCooldown = result.kerbCooldown;
   }
 
   return { state: { ...state, x, speed, health, kerbCooldown }, events };
+}
+
+/**
+ * §3.4 / §9: inside a police zone, being on the footpath or the wrong side
+ * of the divider costs a fine. Debounced via `PlayerVehicleState.fineActive`
+ * so the event fires once on entry into the violation, not every step it
+ * holds. Scoring (the −100 point cost) arrives with the scoring system; this
+ * only emits the event.
+ */
+export function detectFine(
+  player: PlayerVehicleState,
+  config: VehicleConfig,
+  map: RouteMap,
+): { fineActive: boolean; events: SimEvent[] } {
+  const edges = computeRoadEdges(map.laneCountAt(player.y));
+  const halfWidth = config.width / 2;
+  const halfLength = config.length / 2;
+  const halfExtentX = Math.abs(halfWidth * Math.cos(player.heading)) + Math.abs(halfLength * Math.sin(player.heading));
+
+  const onFootpath = player.x - halfExtentX < edges.footpathPlayerRightX;
+  const onWrongSide = player.x + halfExtentX > edges.dividerLeftX;
+  const violating = (onFootpath || onWrongSide) && map.policeZoneAt(player.y);
+
+  const events: SimEvent[] = [];
+  if (violating && !player.fineActive) {
+    const fineReason: FineReason = onFootpath ? 'footpath' : 'wrongSide';
+    events.push({ type: 'fine', healthLost: 0, fineReason });
+  }
+
+  return { fineActive: violating, events };
 }
 
 function applyContactDamage(

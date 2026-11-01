@@ -2,11 +2,14 @@ import { describe, expect, it } from 'vitest';
 import { createTrafficPool } from '../../src/sim/traffic';
 import { despawnBehindPlayer, fillInitialTraffic, spawnTraffic } from '../../src/sim/spawner';
 import { Rng } from '../../src/sim/rng';
-import { SPAWN, VEHICLES } from '../../src/sim/config';
+import { SPAWN, VEHICLES, MOTORCYCLE_WRONG_WAY } from '../../src/sim/config';
 import { computeRoadEdges } from '../../src/sim/road';
+import { createDefaultTestMap, RouteMap } from '../../src/sim/map';
 import type { TrafficVehicleState } from '../../src/sim/types';
 
 const player = { x: 0, y: 0, width: VEHICLES.car.width, length: VEHICLES.car.length };
+const map = createDefaultTestMap();
+const targetActiveCount = map.targetActiveCountAt(player.y);
 
 function rectsOverlap(
   a: { x: number; y: number; width: number; length: number },
@@ -28,6 +31,9 @@ describe('despawnBehindPlayer', () => {
       length: 72,
       stopTimer: 0,
       sidewaysShift: null,
+      drift: null,
+      direction: 1,
+      lastBusStopY: null,
       nearMissGiven: false,
     };
     const near: TrafficVehicleState = { ...far, y: SPAWN.behindPlayerDespawnDistance - 1 };
@@ -44,10 +50,10 @@ describe('fillInitialTraffic', () => {
   it('spawns up to the target active count, all within the player carriageway and non-overlapping', () => {
     const traffic = createTrafficPool();
     const rng = new Rng(1);
-    fillInitialTraffic(traffic, rng, player);
+    fillInitialTraffic(traffic, rng, player, map);
 
     const active = traffic.filter((v) => v.active);
-    expect(active.length).toBe(SPAWN.targetActiveCount);
+    expect(active.length).toBe(targetActiveCount);
 
     const edges = computeRoadEdges();
     for (const vehicle of active) {
@@ -65,8 +71,8 @@ describe('fillInitialTraffic', () => {
   it('is deterministic for a given seed', () => {
     const trafficA = createTrafficPool();
     const trafficB = createTrafficPool();
-    fillInitialTraffic(trafficA, new Rng(7), player);
-    fillInitialTraffic(trafficB, new Rng(7), player);
+    fillInitialTraffic(trafficA, new Rng(7), player, map);
+    fillInitialTraffic(trafficB, new Rng(7), player, map);
     expect(trafficA).toEqual(trafficB);
   });
 });
@@ -90,11 +96,11 @@ describe('spawnTraffic', () => {
     traffic[0].speed = 250;
     traffic[0].cruiseSpeed = 250;
 
-    spawnTraffic(traffic, rng, player);
+    spawnTraffic(traffic, rng, player, map);
 
     const active = traffic.filter((v) => v.active);
     expect(active.length).toBeGreaterThan(1);
-    expect(active.length).toBeLessThanOrEqual(SPAWN.targetActiveCount);
+    expect(active.length).toBeLessThanOrEqual(targetActiveCount);
 
     for (let i = 0; i < active.length; i++) {
       for (let j = i + 1; j < active.length; j++) {
@@ -105,11 +111,68 @@ describe('spawnTraffic', () => {
 
   it('does nothing when the pool is already at the target active count', () => {
     const traffic = createTrafficPool();
-    fillInitialTraffic(traffic, new Rng(5), player);
+    fillInitialTraffic(traffic, new Rng(5), player, map);
     const before = traffic.map((v) => ({ ...v }));
 
-    spawnTraffic(traffic, new Rng(99), player);
+    spawnTraffic(traffic, new Rng(99), player, map);
 
     expect(traffic).toEqual(before);
+  });
+
+  it('spawns rickshaws in clusters sized within [minSize, maxSize], never overlapping', () => {
+    const rickshawMap = new RouteMap([
+      {
+        id: 'rickshaw-test',
+        length: 20000,
+        lanes: 3,
+        divider: true,
+        density: 'high',
+        spawn: { rickshaw: 20 },
+        features: [],
+      },
+    ]);
+    const traffic = createTrafficPool();
+    fillInitialTraffic(traffic, new Rng(11), player, rickshawMap);
+
+    const active = traffic.filter((v) => v.active);
+    expect(active.length).toBeGreaterThan(0);
+    for (const vehicle of active) {
+      expect(vehicle.type).toBe('rickshaw');
+    }
+
+    for (let i = 0; i < active.length; i++) {
+      for (let j = i + 1; j < active.length; j++) {
+        expect(rectsOverlap(active[i], active[j])).toBe(false);
+      }
+    }
+  });
+
+  it('spawns a motorcycle wrong-way, heading toward the player, inside a mapped wrongWay zone', () => {
+    const wrongWayMap = new RouteMap([
+      {
+        id: 'wrongway-test',
+        length: 20000,
+        lanes: 3,
+        divider: true,
+        density: 'low',
+        spawn: { motorcycle: 10 },
+        features: [{ type: 'wrongWay', from: 0, to: 20000 }],
+      },
+    ]);
+    // Positioned well inside the segment (not at its y=0 edge) so the whole
+    // spawn window ahead of the player falls inside the mapped wrongWay zone.
+    const midSegmentPlayer = { ...player, y: 10000 };
+    const traffic = createTrafficPool();
+    fillInitialTraffic(traffic, new Rng(2), midSegmentPlayer, wrongWayMap);
+
+    const active = traffic.filter((v) => v.active);
+    expect(active.length).toBeGreaterThan(0);
+    for (const vehicle of active) {
+      expect(vehicle.type).toBe('motorcycle');
+      expect(vehicle.direction).toBe(-1);
+      expect(vehicle.speed).toBe(MOTORCYCLE_WRONG_WAY.speed);
+      expect(vehicle.cruiseSpeed).toBe(MOTORCYCLE_WRONG_WAY.speed);
+      expect(vehicle.drift).toBeNull();
+    }
   });
 });
