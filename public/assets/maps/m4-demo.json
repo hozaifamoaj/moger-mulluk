@@ -44,7 +44,8 @@
     "features": [
       { "type": "wrongWay", "from": 500, "to": 2000 },
       { "type": "jam", "from": 0, "to": 1000 },
-      { "type": "parked", "at": 2500, "side": "right", "count": 2 }
+      { "type": "parked", "at": 2500, "side": "right", "count": 2 },
+      { "type": "crossing", "at": 2200 }
     ]
   },
   {

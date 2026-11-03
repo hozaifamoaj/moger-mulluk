@@ -1,7 +1,7 @@
-import type { TrafficVehicleState } from './types';
+import type { PedestrianState, TrafficVehicleState } from './types';
 import type { RouteMap } from './map';
 import type { Rng } from './rng';
-import { SPAWN, TRAFFIC_RULES, JAM, BUS_STOP, RICKSHAW_DRIFT, MOTORCYCLE_WEAVE, CNG_CUTIN } from './config';
+import { SPAWN, TRAFFIC_RULES, JAM, BUS_STOP, RICKSHAW_DRIFT, MOTORCYCLE_WEAVE, CNG_CUTIN, PEDESTRIAN } from './config';
 
 /** A fixed-size pool of inactive slots; the spawner activates/reuses them (CLAUDE.md rule 10). */
 export function createTrafficPool(): TrafficVehicleState[] {
@@ -76,17 +76,25 @@ function approach(current: number, target: number, maxDelta: number): number {
  * toward the player and are never added to `alreadyMoved`, so they don't
  * disturb that ascending-y invariant and other traffic doesn't react to
  * them (no AI, rule 9 — only the player's own collision check sees them).
+ *
+ * §5.1 rule 2 / §6: pedestrians (including static waiting passengers, but
+ * not overbridge users) are also keep-distance obstacles, treated as
+ * stationary (speed 0) since they don't move along y.
  */
 export function stepTraffic(
   traffic: TrafficVehicleState[],
   sortedAscendingByY: number[], // indices into `traffic`, ahead-first
   player: Obstacle,
+  pedestrians: readonly PedestrianState[],
   dt: number,
   map: RouteMap,
   rng: Rng,
 ): void {
   const alreadyMoved: Obstacle[] = [];
   const maxDelta = TRAFFIC_RULES.keepDistanceMaxDecel * dt;
+  const pedestrianObstacles: Obstacle[] = pedestrians
+    .filter((p) => p.active && !p.usesOverbridge)
+    .map((p) => ({ x: p.x, y: p.y, width: PEDESTRIAN.radius * 2, length: PEDESTRIAN.radius * 2, speed: 0 }));
 
   for (const index of sortedAscendingByY) {
     const vehicle = traffic[index];
@@ -104,7 +112,7 @@ export function stepTraffic(
       continue;
     }
 
-    const candidates: Obstacle[] = [...alreadyMoved, player];
+    const candidates: Obstacle[] = [...alreadyMoved, player, ...pedestrianObstacles];
     const ahead = findAheadObstacle(vehicle, candidates);
 
     const jamCappedTarget = map.jamSpeedCapAt(vehicle.y)
@@ -173,7 +181,7 @@ function applySidewaysShift(
   }
 
   const remaining = shift.magnitude - shift.progress;
-  const move = Math.min(remaining, TRAFFIC_RULES.sidewaysMoveSpeed * dt);
+  const move = Math.min(remaining, shift.speed * dt);
   vehicle.x += shift.side * move;
   shift.progress += move;
 

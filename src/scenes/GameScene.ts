@@ -1,5 +1,5 @@
 import Phaser from 'phaser';
-import { DISPLAY, ROAD, SIM, VEHICLES, VEHICLE_COLLISION } from '../sim/config';
+import { DISPLAY, ROAD, SIM, VEHICLES, VEHICLE_COLLISION, PEDESTRIAN, HORN } from '../sim/config';
 import { computeRoadEdges } from '../sim/road';
 import { Sim } from '../sim/sim';
 import { RouteMap, validateSegments } from '../sim/map';
@@ -27,11 +27,24 @@ const COLORS = {
   healthBarFillLow: 0xcc5555,
   nearMissText: '#ffee66',
   fineText: '#ff6666',
+  pedestrianHitText: '#ff3333',
+  hornText: '#66ccff',
+  pedestrianWaiting: 0xffcc00,
+  pedestrianWalking: 0xff9966,
+  pedestrianOverbridge: 0xaaaaaa,
+  overbridgeBand: 0x3a3a3a,
+  hornBarBg: 0x222222,
+  hornBarReady: 0x66ccff,
+  hornBarCharging: 0x555555,
 } as const;
 const LANE_MARKING = { dash: 40, gap: 40, width: 3 } as const;
 const CAMERA_PLAYER_SCREEN_FRACTION = 0.7; // §build-plan M2: car sits at ~70% of screen height
 const HEALTH_BAR = { x: 8, y: 90, width: 150, height: 14 } as const;
+const HORN_BAR = { x: 8, y: HEALTH_BAR.y + HEALTH_BAR.height + 6, width: 150, height: 10 } as const;
 const BLINK_INTERVAL_MS = 100; // §8.1: player sprite blinks while invulnerable
+// §6: overbridge is a cosmetic-only structure (never collidable, §6/§8) drawn
+// as a translucent band spanning the full road width at the crossing's y.
+const OVERBRIDGE_VISUAL = { thickness: 24, alpha: 0.5, depth: 50 } as const;
 
 // §3.2 Controls: on-screen reminder of the keyboard bindings. Touch buttons
 // (gas/brake/steer/horn, bottom corners per spec) replace this in M7; until
@@ -44,7 +57,9 @@ export class GameScene extends Phaser.Scene {
   private input_!: KeyboardInput;
   private car!: Phaser.GameObjects.Rectangle;
   private trafficRects!: Phaser.GameObjects.Rectangle[];
+  private pedestrianCircles!: Phaser.GameObjects.Arc[];
   private healthBarFill!: Phaser.GameObjects.Rectangle;
+  private hornBarFill!: Phaser.GameObjects.Rectangle;
   private debugText!: Phaser.GameObjects.Text;
   private debugVisible = true;
   private accumulatorMs = 0;
@@ -65,9 +80,14 @@ export class GameScene extends Phaser.Scene {
     this.input_ = new KeyboardInput(this);
 
     this.drawRoad();
+    this.drawOverbridges();
 
     this.trafficRects = this.sim.state.traffic.map(() =>
       this.add.rectangle(0, 0, 1, 1, COLORS.trafficCar).setOrigin(0.5).setVisible(false),
+    );
+
+    this.pedestrianCircles = this.sim.state.pedestrians.map(() =>
+      this.add.circle(0, 0, PEDESTRIAN.radius, COLORS.pedestrianWaiting).setVisible(false),
     );
 
     this.car = this.add
@@ -81,6 +101,17 @@ export class GameScene extends Phaser.Scene {
       .setDepth(1000);
     this.healthBarFill = this.add
       .rectangle(HEALTH_BAR.x, HEALTH_BAR.y, HEALTH_BAR.width, HEALTH_BAR.height, COLORS.healthBarFill)
+      .setOrigin(0, 0)
+      .setScrollFactor(0)
+      .setDepth(1001);
+
+    this.add
+      .rectangle(HORN_BAR.x, HORN_BAR.y, HORN_BAR.width, HORN_BAR.height, COLORS.hornBarBg)
+      .setOrigin(0, 0)
+      .setScrollFactor(0)
+      .setDepth(1000);
+    this.hornBarFill = this.add
+      .rectangle(HORN_BAR.x, HORN_BAR.y, HORN_BAR.width, HORN_BAR.height, COLORS.hornBarReady)
       .setOrigin(0, 0)
       .setScrollFactor(0)
       .setDepth(1001);
@@ -127,6 +158,10 @@ export class GameScene extends Phaser.Scene {
     for (const event of events) {
       if (event.type === 'nearMiss') this.showFloatingText('Near miss!', COLORS.nearMissText);
       if (event.type === 'fine') this.showFloatingText('Fine!', COLORS.fineText);
+      // §8: the actual fail-state halt (timer stop, Results screen) is M6's
+      // job; this scene only acknowledges the hit happened.
+      if (event.type === 'pedestrianHit') this.showFloatingText('Pedestrian hit!', COLORS.pedestrianHitText);
+      if (event.type === 'hornUsed') this.showFloatingText('Honk!', COLORS.hornText);
     }
   }
 
@@ -154,7 +189,9 @@ export class GameScene extends Phaser.Scene {
     this.car.setAlpha(this.blinkAlpha());
 
     this.renderTraffic();
+    this.renderPedestrians();
     this.renderHealthBar();
+    this.renderHornBar();
     this.applyCamera();
 
     if (this.debugVisible) {
@@ -187,6 +224,38 @@ export class GameScene extends Phaser.Scene {
       rect.setSize(vehicle.width, vehicle.length);
       rect.setFillStyle(this.trafficColor(vehicle.type));
     }
+  }
+
+  // §6: waiting-passenger, footpath-waiting/walking, and overbridge
+  // pedestrians each get a distinct color so their state reads at a glance;
+  // overbridge users are also drawn above everything else (depth), since
+  // they're physically elevated and never a collision target.
+  private renderPedestrians(): void {
+    const pedestrians = this.sim.state.pedestrians;
+    for (let i = 0; i < pedestrians.length; i++) {
+      const ped = pedestrians[i];
+      const circle = this.pedestrianCircles[i];
+      circle.setVisible(ped.active);
+      if (!ped.active) continue;
+
+      circle.setPosition(ped.x, ped.y);
+      if (ped.usesOverbridge) {
+        circle.setFillStyle(COLORS.pedestrianOverbridge);
+        circle.setDepth(OVERBRIDGE_VISUAL.depth + 1);
+      } else {
+        circle.setFillStyle(ped.phase === 'waiting' ? COLORS.pedestrianWaiting : COLORS.pedestrianWalking);
+        circle.setDepth(0);
+      }
+    }
+  }
+
+  // §3.3: fills as the horn recharges, so the player can see at a glance
+  // whether honking again is available.
+  private renderHornBar(): void {
+    const fraction = 1 - this.sim.state.hornCooldown / HORN.cooldownSeconds;
+    const ready = this.sim.state.hornCooldown <= 0;
+    this.hornBarFill.setSize(HORN_BAR.width * Math.max(0, Math.min(1, fraction)), HORN_BAR.height);
+    this.hornBarFill.setFillStyle(ready ? COLORS.hornBarReady : COLORS.hornBarCharging);
   }
 
   private trafficColor(type: TrafficVehicleType): number {
@@ -247,6 +316,26 @@ export class GameScene extends Phaser.Scene {
           graphics.fillRect(x, y, LANE_MARKING.width, LANE_MARKING.dash);
         }
       }
+    }
+  }
+
+  // §6: a translucent band spanning the full road width at each overbridge
+  // crossing's y, drawn above traffic/pedestrians (depth) to read as a
+  // structure above the road rather than a marking on it.
+  private drawOverbridges(): void {
+    const graphics = this.add.graphics().setDepth(OVERBRIDGE_VISUAL.depth);
+
+    for (const crossing of this.map.crossings) {
+      if (!crossing.overbridge) continue;
+
+      const edges = computeRoadEdges(this.map.laneCountAt(crossing.y));
+      graphics.fillStyle(COLORS.overbridgeBand, OVERBRIDGE_VISUAL.alpha);
+      graphics.fillRect(
+        edges.roadLeftX,
+        crossing.y - OVERBRIDGE_VISUAL.thickness / 2,
+        edges.roadRightX - edges.roadLeftX,
+        OVERBRIDGE_VISUAL.thickness,
+      );
     }
   }
 

@@ -181,6 +181,16 @@ export interface ParkedVehicle {
   length: number;
 }
 
+export interface CrossingZone {
+  y: number;
+  overbridge: boolean;
+}
+
+export interface WaitingPassenger {
+  x: number;
+  y: number;
+}
+
 interface AbsoluteRange {
   from: number; // larger y: the segment-start side
   to: number; // smaller y: the finish side
@@ -203,6 +213,8 @@ export class RouteMap {
   readonly totalLength: number;
   readonly busStops: readonly number[];
   readonly parkedVehicles: readonly ParkedVehicle[];
+  readonly crossings: readonly CrossingZone[];
+  readonly waitingPassengers: readonly WaitingPassenger[];
 
   // Public so the presentation layer can draw each segment at its own lane
   // width (the 3-to-2-lane merge, §7.2) without duplicating this layout math.
@@ -218,6 +230,8 @@ export class RouteMap {
 
     const busStops: number[] = [];
     const parked: ParkedVehicle[] = [];
+    const crossings: CrossingZone[] = [];
+    const waitingPassengers: WaitingPassenger[] = [];
 
     for (const segment of segments) {
       const bottomY = topY - segment.length;
@@ -225,9 +239,20 @@ export class RouteMap {
 
       for (const feature of segment.features) {
         switch (feature.type) {
-          case 'busStop':
-            busStops.push(topY - feature.at);
+          case 'busStop': {
+            const stopY = topY - feature.at;
+            busStops.push(stopY);
+
+            // §6 "waiting passengers": no count or exact placement rule is
+            // given beyond "outer edge of the road" — see MAP_PLACEMENT's
+            // TODO(tune) comment.
+            const stopEdges = computeRoadEdges(segment.lanes);
+            const passengerX = stopEdges.footpathPlayerRightX + MAP_PLACEMENT.waitingPassengerMargin;
+            for (let i = 0; i < MAP_PLACEMENT.waitingPassengerCount; i++) {
+              waitingPassengers.push({ x: passengerX, y: stopY - i * MAP_PLACEMENT.waitingPassengerSpacing });
+            }
             break;
+          }
           case 'dividerGap': {
             const centerY = topY - feature.at;
             this.dividerGaps.push({ from: centerY + feature.length / 2, to: centerY - feature.length / 2 });
@@ -261,7 +286,7 @@ export class RouteMap {
             break;
           }
           case 'crossing':
-            // Validated but not yet consumed: pedestrians/crossings arrive in M5.
+            crossings.push({ y: topY - feature.at, overbridge: feature.overbridge ?? false });
             break;
         }
       }
@@ -271,6 +296,8 @@ export class RouteMap {
 
     this.busStops = busStops;
     this.parkedVehicles = parked;
+    this.crossings = crossings;
+    this.waitingPassengers = waitingPassengers;
   }
 
   private segmentAt(y: number): SegmentRange {

@@ -1,9 +1,9 @@
 import { describe, expect, it } from 'vitest';
-import { resolveRoadContact, resolveVehicleCollisions, detectFine } from '../../src/sim/collision';
+import { resolveRoadContact, resolveVehicleCollisions, detectFine, detectPedestrianHit } from '../../src/sim/collision';
 import { computeRoadEdges } from '../../src/sim/road';
 import { RouteMap, createDefaultTestMap } from '../../src/sim/map';
-import { VEHICLES, COLLISION, SIM, VEHICLE_COLLISION } from '../../src/sim/config';
-import type { PlayerVehicleState, TrafficVehicleState } from '../../src/sim/types';
+import { VEHICLES, COLLISION, SIM, VEHICLE_COLLISION, PEDESTRIAN } from '../../src/sim/config';
+import type { PedestrianState, PlayerVehicleState, TrafficVehicleState } from '../../src/sim/types';
 
 const car = VEHICLES.car;
 const dt = SIM.stepSeconds;
@@ -258,5 +258,76 @@ describe('resolveVehicleCollisions', () => {
     expect(invulnerability).toBeCloseTo(0.5 - dt, 10);
     expect(events).toContainEqual({ type: 'vehicleCollision', healthLost: 0, trafficId: 0 });
     expect(vehicle.stopTimer).toBe(0); // not re-paused by a no-damage push-apart
+  });
+});
+
+function pedestrianAt(x: number, y: number, overrides: Partial<PedestrianState> = {}): PedestrianState {
+  return {
+    active: true,
+    crossingIndex: 0,
+    isWaitingPassenger: false,
+    usesOverbridge: false,
+    phase: 'walking',
+    x,
+    y,
+    startX: x,
+    targetX: x + 100,
+    speed: 60,
+    waitTimer: 0,
+    midwayStopX: null,
+    hasStoppedMidway: false,
+    stopTimer: 0,
+    speedBoostTimer: 0,
+    ...overrides,
+  };
+}
+
+describe('detectPedestrianHit', () => {
+  it('fires a pedestrianHit and deactivates the pedestrian on contact with the player', () => {
+    const player = stateAt(0, { y: 0 });
+    const ped = pedestrianAt(0, 0); // dead center of the player rect
+
+    const { events } = detectPedestrianHit(player, [ped], car);
+
+    expect(events).toContainEqual({ type: 'pedestrianHit', healthLost: 0, pedestrianId: 0 });
+    expect(ped.active).toBe(false);
+  });
+
+  it('does not fire when the pedestrian is clear of the player rect', () => {
+    const player = stateAt(0, { y: 0 });
+    const ped = pedestrianAt(car.width / 2 + PEDESTRIAN.radius + 50, 0);
+
+    const { events } = detectPedestrianHit(player, [ped], car);
+
+    expect(events).toHaveLength(0);
+    expect(ped.active).toBe(true);
+  });
+
+  it('fires only once per contact: an already-inactive pedestrian cannot be hit again', () => {
+    const player = stateAt(0, { y: 0 });
+    const ped = pedestrianAt(0, 0, { active: false });
+
+    const { events } = detectPedestrianHit(player, [ped], car);
+
+    expect(events).toHaveLength(0);
+  });
+
+  it('ignores a pedestrian that uses the overbridge, even if geometrically overlapping', () => {
+    const player = stateAt(0, { y: 0 });
+    const ped = pedestrianAt(0, 0, { usesOverbridge: true });
+
+    const { events } = detectPedestrianHit(player, [ped], car);
+
+    expect(events).toHaveLength(0);
+    expect(ped.active).toBe(true);
+  });
+
+  it('ignores a pedestrian far outside the broad-phase scan margin', () => {
+    const player = stateAt(0, { y: 0 });
+    const ped = pedestrianAt(0, 100_000);
+
+    const { events } = detectPedestrianHit(player, [ped], car);
+
+    expect(events).toHaveLength(0);
   });
 });

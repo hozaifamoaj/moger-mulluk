@@ -28,8 +28,8 @@ function dot(a: Axis, b: Axis): number {
 
 // Side axis (width direction) and forward axis (length direction). Heading 0
 // moves along -y with width along x (src/sim/vehicle.ts), so these are the
-// rect's local x/y axes rotated by heading.
-function axes(rect: RotatedRect): [Axis, Axis] {
+// rect's local x/y axes rotated by heading. Exported for circleOverlapsRect.
+export function axes(rect: RotatedRect): [Axis, Axis] {
   const cos = Math.cos(rect.heading);
   const sin = Math.sin(rect.heading);
   return [
@@ -88,4 +88,32 @@ export function satOverlapInflated(a: RotatedRect, b: RotatedRect, margin: numbe
     halfLength: rect.halfLength + half,
   });
   return satOverlap(inflated(a), inflated(b)).overlap;
+}
+
+export interface Circle {
+  x: number;
+  y: number;
+  radius: number;
+}
+
+/**
+ * §6/§8: pedestrians are circles, not rectangles, so the player-vs-pedestrian
+ * hit check can't reuse satOverlap directly. Standard closest-point-on-OBB
+ * test: rotate the circle's center into the rectangle's local space, clamp
+ * to its half-extents, and compare the remaining distance to the radius.
+ */
+export function circleOverlapsRect(circle: Circle, rect: RotatedRect): boolean {
+  const [sideAxis, forwardAxis] = axes(rect);
+  const dx = circle.x - rect.x;
+  const dy = circle.y - rect.y;
+
+  const localX = dot({ x: dx, y: dy }, sideAxis);
+  const localY = dot({ x: dx, y: dy }, forwardAxis);
+
+  const clampedX = Math.min(Math.max(localX, -rect.halfWidth), rect.halfWidth);
+  const clampedY = Math.min(Math.max(localY, -rect.halfLength), rect.halfLength);
+
+  const distX = localX - clampedX;
+  const distY = localY - clampedY;
+  return distX * distX + distY * distY <= circle.radius * circle.radius;
 }

@@ -199,9 +199,15 @@ export const RICKSHAW_CLUSTER = {
 
 // §7.3 map-placed parked vehicles: clearance from the kerb/divider line, and
 // spacing between consecutive vehicles within the same `parked` feature.
+// §6 "waiting passengers" at bus stops are placed the same way, but the spec
+// gives no count or exact placement rule beyond "outer edge of the road" —
+// the three waitingPassenger* values are TODO(tune).
 export const MAP_PLACEMENT = {
   parkedMargin: 10, // px
   parkedSpacing: 10, // px
+  waitingPassengerCount: 2, // per bus stop
+  waitingPassengerMargin: 14, // px inside the kerb line (PEDESTRIAN.radius + a little clearance)
+  waitingPassengerSpacing: 24, // px between consecutive waiting passengers
 } as const;
 
 // §8 / §8.1 Vehicle-vs-vehicle collision (player vs traffic only — traffic
@@ -226,4 +232,35 @@ export const NEAR_MISS = {
   distance: 12, // px gap counted as a near miss
   speedThreshold: 0.6, // player speed must exceed 60% of its own maxSpeed
   cap: 40, // per run
+} as const;
+
+// §6 Pedestrians.
+export const PEDESTRIAN = {
+  radius: 9, // px
+  speedMin: 55, // px/s
+  speedMax: 75, // px/s
+  spawnIntervalMin: 4, // seconds, per crossing zone
+  spawnIntervalMax: 8, // seconds
+  maxPerZone: 3, // on the road at once, per crossing zone (overbridge users don't count)
+  minWarningSeconds: 1.5, // §6: "at least 1.5 seconds" on the footpath before stepping out
+  maxWarningSeconds: 3, // TODO(tune): the spec gives only a minimum
+  midwayStopChance: 0.25,
+  midwayStopDurationSeconds: 1,
+  pairChance: 0.2,
+  overbridgeChance: 0.5, // only rolled when the crossing has overbridge: true
+  pairYOffset: 10, // px: along-road separation between paired walkers so they don't fully overlap — TODO(tune)
+  poolCapacity: 40, // TODO(tune): must exceed (maxPerZone x 2 for pairs) per crossing zone, plus overbridge users and waiting passengers, with margin
+} as const;
+
+// §3.3 Horn: affects anything inside a zone ahead of the player, with a
+// cooldown so it can't be held down to clear the road.
+export const HORN = {
+  aheadDistance: 200, // px: zone extends this far ahead of the player
+  width: 120, // px: zone width, centered on the player's x
+  cooldownSeconds: 2,
+  rickshawShiftMagnitude: 20, // px, toward the nearer kerb
+  rickshawShiftDurationSeconds: 0.5,
+  pedestrianWaitExtensionSeconds: 1, // added to waitTimer for a pedestrian still on the footpath
+  pedestrianSpeedBoostMultiplier: 1.5,
+  pedestrianSpeedBoostSeconds: 1,
 } as const;

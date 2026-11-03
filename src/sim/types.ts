@@ -41,8 +41,15 @@ export interface PlayerVehicleState {
 
 // CLAUDE.md rule 8: the sim emits events; HUD/audio/scenes react to them and
 // never mutate sim state directly. More event types arrive with
-// pedestrians, scoring and the finish line in later milestones.
-export type SimEventType = 'kerbContact' | 'dividerContact' | 'vehicleCollision' | 'nearMiss' | 'fine';
+// scoring and the finish line in later milestones.
+export type SimEventType =
+  | 'kerbContact'
+  | 'dividerContact'
+  | 'vehicleCollision'
+  | 'nearMiss'
+  | 'fine'
+  | 'pedestrianHit'
+  | 'hornUsed';
 
 // §8.1 collision classes, by relative speed at impact.
 export type CollisionClass = 'scrape' | 'collision' | 'highSpeed';
@@ -60,6 +67,8 @@ export interface SimEvent {
   trafficId?: number;
   // Present only on 'fine' events.
   fineReason?: FineReason;
+  // Present only on 'pedestrianHit' events: the pool index of the pedestrian involved.
+  pedestrianId?: number;
 }
 
 // §5.2 Traffic types. Rickshaw/CNG/motorcycle/parked arrive M4.
@@ -101,6 +110,10 @@ export interface TrafficVehicleState {
     magnitude: number;
     side: -1 | 1;
     progress: number;
+    // px/s for this particular shift. Scripted car/CNG shifts move at
+    // TRAFFIC_RULES.sidewaysMoveSpeed; the horn-triggered rickshaw shift
+    // (§3.3) moves faster, over a fixed 0.5s regardless of magnitude.
+    speed: number;
   } | null;
   // §5.2 rickshaw/motorcycle continuous sideways drift: a sine wave around a
   // fixed base x (distinct from the one-shot `sidewaysShift` above). Null for
@@ -119,14 +132,54 @@ export interface TrafficVehicleState {
   nearMissGiven: boolean;
 }
 
+// §6 Pedestrians. Pool-friendly like TrafficVehicleState (rule 10): a fixed
+// array of slots, `active` marking which currently represent a live
+// pedestrian.
+export type PedestrianPhase = 'waiting' | 'walking' | 'stoppedMidway';
+
+export interface PedestrianState {
+  active: boolean;
+  // Index into RouteMap.crossings this pedestrian belongs to, used for the
+  // §6 per-zone cap (max 3 on the road at once). -1 for waiting bus-stop
+  // passengers, which aren't tied to a crossing zone.
+  crossingIndex: number;
+  // §6 "waiting passengers": static obstacles placed once at bus stops.
+  // Always stays in 'waiting' with an infinite waitTimer; stepPedestrians
+  // skips these entirely.
+  isWaitingPassenger: boolean;
+  // §6: drawn on the overbridge; never a collision target or a traffic
+  // keep-distance obstacle, and excluded from the per-zone road cap.
+  usesOverbridge: boolean;
+  phase: PedestrianPhase;
+  x: number;
+  y: number; // fixed for the pedestrian's lifetime; crossing movement is in x only
+  startX: number;
+  targetX: number;
+  speed: number; // px/s, rolled at spawn within PEDESTRIAN.speedMin/speedMax
+  // Seconds remaining on the footpath before stepping out (phase === 'waiting').
+  // §3.3 horn: a honk inside the horn zone adds HORN.pedestrianWaitExtensionSeconds.
+  waitTimer: number;
+  // x at which this pedestrian pauses once reached, rolled at spawn (§6: 25%
+  // chance); null if this pedestrian never stops midway.
+  midwayStopX: number | null;
+  hasStoppedMidway: boolean;
+  // Seconds remaining of the midway pause (phase === 'stoppedMidway').
+  stopTimer: number;
+  // Seconds remaining of a horn-triggered 1.5x walking-speed boost (§3.3).
+  speedBoostTimer: number;
+}
+
 export interface SimState {
   stepCount: number;
   elapsedSeconds: number;
   player: PlayerVehicleState;
   traffic: readonly TrafficVehicleState[];
+  pedestrians: readonly PedestrianState[];
   // §8.1: seconds remaining of player invulnerability after a vehicle
   // collision (no further damage/points; sprite blinks).
   invulnerability: number;
   // §8: near misses counted so far this run, capped at NEAR_MISS.cap.
   nearMissCount: number;
+  // §3.3: seconds remaining before the horn can be used again.
+  hornCooldown: number;
 }

@@ -217,6 +217,7 @@ function activateSlot(
           magnitude: rng.range(CAR_SIDEWAYS_SHIFT.minMagnitude, CAR_SIDEWAYS_SHIFT.maxMagnitude),
           side: rng.chance(0.5) ? 1 : -1,
           progress: 0,
+          speed: TRAFFIC_RULES.sidewaysMoveSpeed,
         }
       : type === 'cng'
         ? {
@@ -226,6 +227,7 @@ function activateSlot(
             magnitude: 0,
             side: 1,
             progress: 0,
+            speed: TRAFFIC_RULES.sidewaysMoveSpeed,
           }
         : null;
 }

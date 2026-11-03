@@ -1,11 +1,19 @@
-import type { Input, SimEvent, SimState, TrafficVehicleState } from './types';
+import type { Input, PedestrianState, SimEvent, SimState, TrafficVehicleState } from './types';
 import type { RouteMap } from './map';
 import { VEHICLES } from './config';
 import { stepVehicle, applyHealthPenalty } from './vehicle';
-import { resolveRoadContact, resolveVehicleCollisions, detectNearMisses, detectFine } from './collision';
+import {
+  resolveRoadContact,
+  resolveVehicleCollisions,
+  detectNearMisses,
+  detectFine,
+  detectPedestrianHit,
+} from './collision';
 import { computeRoadEdges } from './road';
 import { createDefaultTestMap } from './map';
 import { createTrafficPool, stepTraffic } from './traffic';
+import { createPedestrianPool, placeWaitingPassengers, spawnPedestrians, stepPedestrians } from './pedestrian';
+import { stepHorn } from './horn';
 import { despawnBehindPlayer, fillInitialTraffic, placeParkedVehicles, spawnTraffic } from './spawner';
 import { Rng } from './rng';
 
@@ -22,6 +30,8 @@ export class Sim {
   // `readonly`); traffic/spawner/collision code mutates slots in place
   // rather than reallocating (rule 10).
   private readonly _traffic: TrafficVehicleState[];
+  private readonly _pedestrians: PedestrianState[];
+  private readonly _pedestrianSpawnTimers: number[];
   private readonly _map: RouteMap;
   private _state: SimState;
 
@@ -42,6 +52,10 @@ export class Sim {
       map,
     );
 
+    this._pedestrians = createPedestrianPool();
+    placeWaitingPassengers(this._pedestrians, map);
+    this._pedestrianSpawnTimers = new Array(map.crossings.length).fill(0);
+
     this._state = {
       stepCount: 0,
       elapsedSeconds: 0,
@@ -55,8 +69,10 @@ export class Sim {
         fineActive: false,
       },
       traffic: this._traffic,
+      pedestrians: this._pedestrians,
       invulnerability: 0,
       nearMissCount: 0,
+      hornCooldown: 0,
     };
   }
 
@@ -78,6 +94,16 @@ export class Sim {
       this._map,
     );
 
+    const { hornCooldown, events: hornEvents } = stepHorn(
+      input,
+      this._state.hornCooldown,
+      { x: playerAfterRoad.x, y: playerAfterRoad.y },
+      this._traffic,
+      this._pedestrians,
+      this._map,
+      dt,
+    );
+
     const activeIndices: number[] = [];
     for (let i = 0; i < this._traffic.length; i++) {
       if (this._traffic[i].active) activeIndices.push(i);
@@ -88,10 +114,13 @@ export class Sim {
       this._traffic,
       activeIndices,
       { x: playerAfterRoad.x, y: playerAfterRoad.y, width: VEHICLES.car.width, length: VEHICLES.car.length, speed: playerAfterRoad.speed },
+      this._pedestrians,
       dt,
       this._map,
       this._rng,
     );
+
+    stepPedestrians(this._pedestrians, dt);
 
     const {
       state: playerAfterCollision,
@@ -109,6 +138,8 @@ export class Sim {
     const { fineActive, events: fineEvents } = detectFine(playerAfterCollision, VEHICLES.car, this._map);
     const playerAfterFine = { ...playerAfterCollision, fineActive };
 
+    const { events: pedestrianHitEvents } = detectPedestrianHit(playerAfterFine, this._pedestrians, VEHICLES.car);
+
     despawnBehindPlayer(this._traffic, playerAfterFine.y);
     spawnTraffic(
       this._traffic,
@@ -116,16 +147,19 @@ export class Sim {
       { x: playerAfterFine.x, y: playerAfterFine.y, width: VEHICLES.car.width, length: VEHICLES.car.length },
       this._map,
     );
+    spawnPedestrians(this._pedestrians, this._rng, this._map, this._pedestrianSpawnTimers, dt);
 
     this._state = {
       stepCount: this._state.stepCount + 1,
       elapsedSeconds: this._state.elapsedSeconds + dt,
       player: playerAfterFine,
       traffic: this._traffic,
+      pedestrians: this._pedestrians,
       invulnerability,
       nearMissCount,
+      hornCooldown,
     };
 
-    return [...roadEvents, ...collisionEvents, ...nearMissEvents, ...fineEvents];
+    return [...roadEvents, ...hornEvents, ...collisionEvents, ...nearMissEvents, ...fineEvents, ...pedestrianHitEvents];
   }
 }

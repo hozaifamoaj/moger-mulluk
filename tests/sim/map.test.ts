@@ -166,6 +166,51 @@ describe('RouteMap', () => {
     expect(Math.abs(map.parkedVehicles[0].y - map.parkedVehicles[1].y)).toBeCloseTo(config.length + 10, 5);
   });
 
+  it('converts a segment-relative crossing offset into an absolute y, defaulting overbridge to false', () => {
+    const map = new RouteMap([
+      {
+        id: 'a',
+        length: 3000,
+        lanes: 3,
+        divider: true,
+        density: 'low',
+        spawn: {},
+        features: [
+          { type: 'crossing', at: 1000 },
+          { type: 'crossing', at: 2000, overbridge: true },
+        ],
+      },
+    ]);
+
+    expect(map.crossings).toEqual([
+      { y: 2000, overbridge: false },
+      { y: 1000, overbridge: true },
+    ]);
+  });
+
+  it('places waitingPassengerCount passengers per bus stop, just inside the player-side footpath, spaced along y', () => {
+    const map = new RouteMap([
+      {
+        id: 'a',
+        length: 3000,
+        lanes: 3,
+        divider: true,
+        density: 'low',
+        spawn: {},
+        features: [{ type: 'busStop', at: 1200 }],
+      },
+    ]);
+    const edges = computeRoadEdges(3);
+
+    expect(map.waitingPassengers).toHaveLength(2); // MAP_PLACEMENT.waitingPassengerCount
+    for (const passenger of map.waitingPassengers) {
+      expect(passenger.x).toBeGreaterThan(edges.footpathPlayerRightX);
+      expect(passenger.x).toBeLessThan(edges.dividerLeftX);
+    }
+    expect(map.waitingPassengers[0].y).toBe(1800); // totalLength(3000) - at(1200)
+    expect(map.waitingPassengers[0].y - map.waitingPassengers[1].y).toBe(24); // MAP_PLACEMENT.waitingPassengerSpacing
+  });
+
   it('returns a per-segment spawn table filtered to non-zero entries, and its count sum as the target active count', () => {
     const map = new RouteMap([
       { id: 'a', length: 1000, lanes: 3, divider: true, density: 'low', spawn: { car: 5, bus: 0, rickshaw: 3 }, features: [] },

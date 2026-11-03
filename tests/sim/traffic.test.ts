@@ -10,10 +10,11 @@ import {
   JAM,
   BUS_STOP,
   CNG_CUTIN,
+  PEDESTRIAN,
 } from '../../src/sim/config';
 import { createDefaultTestMap, RouteMap } from '../../src/sim/map';
 import { Rng } from '../../src/sim/rng';
-import type { TrafficVehicleState } from '../../src/sim/types';
+import type { PedestrianState, TrafficVehicleState } from '../../src/sim/types';
 
 const dt = SIM.stepSeconds;
 const car = TRAFFIC.car;
@@ -53,7 +54,7 @@ describe('stepTraffic', () => {
     let previousY = traffic[0].y;
 
     for (let i = 0; i < 1000; i++) {
-      stepTraffic(traffic, [0], farPlayer, dt, map, freshRng());
+      stepTraffic(traffic, [0], farPlayer, [], dt, map, freshRng());
       expect(traffic[0].speed).toBeLessThanOrEqual(250);
       expect(traffic[0].y).toBeLessThanOrEqual(previousY); // moves toward -y
       previousY = traffic[0].y;
@@ -69,7 +70,7 @@ describe('stepTraffic', () => {
     const traffic = [ahead, behind];
 
     // ahead (index 0) processed first, per the ascending-y contract.
-    stepTraffic(traffic, [0, 1], farPlayer, dt, map, freshRng());
+    stepTraffic(traffic, [0, 1], farPlayer, [], dt, map, freshRng());
 
     expect(behind.y).toBeCloseTo(minFrontBumperY, 5);
     expect(behind.speed).toBeCloseTo(0, 5);
@@ -83,7 +84,7 @@ describe('stepTraffic', () => {
     const traffic = [ahead, behind];
     const maxDelta = TRAFFIC_RULES.keepDistanceMaxDecel * dt;
 
-    stepTraffic(traffic, [0, 1], farPlayer, dt, map, freshRng());
+    stepTraffic(traffic, [0, 1], farPlayer, [], dt, map, freshRng());
 
     expect(behind.speed).toBeCloseTo(400 - maxDelta, 5);
   });
@@ -92,7 +93,7 @@ describe('stepTraffic', () => {
     const vehicle = freshVehicle({ y: 500, speed: 200, stopTimer: 0.5 });
     const traffic = [vehicle];
 
-    stepTraffic(traffic, [0], farPlayer, dt, map, freshRng());
+    stepTraffic(traffic, [0], farPlayer, [], dt, map, freshRng());
 
     expect(vehicle.y).toBe(500);
     expect(vehicle.speed).toBe(0);
@@ -104,13 +105,13 @@ describe('stepTraffic', () => {
       x: 100,
       y: 1000,
       speed: 0,
-      sidewaysShift: { remainingTriggerDistance: 0, magnitude: 40, side: 1, progress: 0 },
+      sidewaysShift: { remainingTriggerDistance: 0, magnitude: 40, side: 1, progress: 0, speed: TRAFFIC_RULES.sidewaysMoveSpeed },
     });
     // Occupies the space the shift would move into, directly alongside.
     const blocker = freshVehicle({ x: 100 + 40, y: 1000, speed: 0 });
     const traffic = [shifting, blocker];
 
-    stepTraffic(traffic, [0, 1], farPlayer, dt, map, freshRng());
+    stepTraffic(traffic, [0, 1], farPlayer, [], dt, map, freshRng());
 
     expect(shifting.sidewaysShift).toBeNull();
     expect(shifting.x).toBe(100);
@@ -121,12 +122,12 @@ describe('stepTraffic', () => {
       x: 100,
       y: 1000,
       speed: 0,
-      sidewaysShift: { remainingTriggerDistance: 0, magnitude: 40, side: 1, progress: 0 },
+      sidewaysShift: { remainingTriggerDistance: 0, magnitude: 40, side: 1, progress: 0, speed: TRAFFIC_RULES.sidewaysMoveSpeed },
     });
     const traffic = [shifting];
 
     for (let i = 0; i < 100 && shifting.sidewaysShift !== null; i++) {
-      stepTraffic(traffic, [0], farPlayer, dt, map, freshRng());
+      stepTraffic(traffic, [0], farPlayer, [], dt, map, freshRng());
     }
 
     expect(shifting.sidewaysShift).toBeNull();
@@ -140,18 +141,75 @@ describe('stepTraffic', () => {
       y: 1000,
       speed: 0,
       cruiseSpeed: 0,
-      sidewaysShift: { remainingTriggerDistance: 0, magnitude: 0, side: 1, progress: 0 },
+      sidewaysShift: { remainingTriggerDistance: 0, magnitude: 0, side: 1, progress: 0, speed: TRAFFIC_RULES.sidewaysMoveSpeed },
     });
     // Sits directly where the nearest offset (-30) would move the CNG into.
     const blocker = freshVehicle({ x: 200 - 30, y: 1000, speed: 0, cruiseSpeed: 0 });
     const traffic = [cng, blocker];
 
     for (let i = 0; i < 100 && cng.sidewaysShift !== null; i++) {
-      stepTraffic(traffic, [0, 1], farPlayer, dt, map, freshRng());
+      stepTraffic(traffic, [0, 1], farPlayer, [], dt, map, freshRng());
     }
 
     expect(cng.sidewaysShift).toBeNull();
     expect(cng.x).toBeCloseTo(200 + CNG_CUTIN.offsets[1], 5); // -30 blocked, next-nearest (30) taken
+  });
+});
+
+function freshPedestrian(overrides: Partial<PedestrianState> = {}): PedestrianState {
+  return {
+    active: true,
+    crossingIndex: 0,
+    isWaitingPassenger: false,
+    usesOverbridge: false,
+    phase: 'waiting',
+    x: 0,
+    y: 0,
+    startX: 0,
+    targetX: 0,
+    speed: 0,
+    waitTimer: 0,
+    midwayStopX: null,
+    hasStoppedMidway: false,
+    stopTimer: 0,
+    speedBoostTimer: 0,
+    ...overrides,
+  };
+}
+
+describe('pedestrians as keep-distance obstacles', () => {
+  it('treats an active, non-overbridge pedestrian ahead as a stationary obstacle to stop short of', () => {
+    const ped = freshPedestrian({ x: 0, y: 1000 });
+    const minFrontBumperY = ped.y + PEDESTRIAN.radius + TRAFFIC_RULES.keepDistanceGap + car.length / 2;
+    const vehicle = freshVehicle({ x: 0, y: minFrontBumperY, speed: 1000, cruiseSpeed: 1000 });
+    const traffic = [vehicle];
+
+    stepTraffic(traffic, [0], farPlayer, [ped], dt, map, freshRng());
+
+    expect(vehicle.y).toBeCloseTo(minFrontBumperY, 5);
+    expect(vehicle.speed).toBeCloseTo(0, 5);
+  });
+
+  it('ignores an overbridge pedestrian: traffic does not slow for it', () => {
+    const ped = freshPedestrian({ x: 0, y: 1000, usesOverbridge: true });
+    const minFrontBumperY = ped.y + PEDESTRIAN.radius + TRAFFIC_RULES.keepDistanceGap + car.length / 2;
+    const vehicle = freshVehicle({ x: 0, y: minFrontBumperY, speed: 1000, cruiseSpeed: 1000 });
+    const traffic = [vehicle];
+
+    stepTraffic(traffic, [0], farPlayer, [ped], dt, map, freshRng());
+
+    expect(vehicle.speed).toBeGreaterThan(0);
+  });
+
+  it('ignores an inactive pedestrian', () => {
+    const ped = freshPedestrian({ x: 0, y: 1000, active: false });
+    const minFrontBumperY = ped.y + PEDESTRIAN.radius + TRAFFIC_RULES.keepDistanceGap + car.length / 2;
+    const vehicle = freshVehicle({ x: 0, y: minFrontBumperY, speed: 1000, cruiseSpeed: 1000 });
+    const traffic = [vehicle];
+
+    stepTraffic(traffic, [0], farPlayer, [ped], dt, map, freshRng());
+
+    expect(vehicle.speed).toBeGreaterThan(0);
   });
 });
 
@@ -168,7 +226,7 @@ describe('rickshaw/motorcycle continuous drift', () => {
     const traffic = [vehicle];
 
     for (let i = 0; i < 300; i++) {
-      stepTraffic(traffic, [0], farPlayer, dt, map, freshRng());
+      stepTraffic(traffic, [0], farPlayer, [], dt, map, freshRng());
       expect(Math.abs(vehicle.x - 100)).toBeLessThanOrEqual(RICKSHAW_DRIFT.amplitude + 1e-6);
     }
   });
@@ -185,7 +243,7 @@ describe('rickshaw/motorcycle continuous drift', () => {
     const traffic = [vehicle];
 
     for (let i = 0; i < 300; i++) {
-      stepTraffic(traffic, [0], farPlayer, dt, map, freshRng());
+      stepTraffic(traffic, [0], farPlayer, [], dt, map, freshRng());
       expect(Math.abs(vehicle.x - 200)).toBeLessThanOrEqual(MOTORCYCLE_WEAVE.amplitude + 1e-6);
     }
   });
@@ -208,7 +266,7 @@ describe('wrong-way motorcycle', () => {
     const traffic = [obstacle, vehicle];
     const previousY = vehicle.y;
 
-    stepTraffic(traffic, [0, 1], farPlayer, dt, map, freshRng());
+    stepTraffic(traffic, [0, 1], farPlayer, [], dt, map, freshRng());
 
     expect(vehicle.y).toBeCloseTo(previousY + MOTORCYCLE_WRONG_WAY.speed * dt, 5);
     expect(vehicle.speed).toBe(MOTORCYCLE_WRONG_WAY.speed);
@@ -232,7 +290,7 @@ describe('jam zone speed cap', () => {
     const traffic = [vehicle];
 
     for (let i = 0; i < 2000; i++) {
-      stepTraffic(traffic, [0], farPlayer, dt, jamMap, freshRng());
+      stepTraffic(traffic, [0], farPlayer, [], dt, jamMap, freshRng());
       expect(vehicle.speed).toBeLessThanOrEqual(JAM.speedCap);
     }
 
@@ -255,7 +313,7 @@ describe('jam zone speed cap', () => {
     const traffic = [vehicle];
 
     for (let i = 0; i < 2000; i++) {
-      stepTraffic(traffic, [0], farPlayer, dt, jamMap, freshRng());
+      stepTraffic(traffic, [0], farPlayer, [], dt, jamMap, freshRng());
     }
 
     expect(vehicle.speed).toBeCloseTo(car.speedMax, 5);
@@ -279,7 +337,7 @@ describe('bus stop dwell', () => {
     const bus = freshVehicle({ type: 'bus', y: 10001, speed: 100, cruiseSpeed: 100 });
     const traffic = [bus];
 
-    stepTraffic(traffic, [0], farPlayer, dt, busStopMap, new Rng(42));
+    stepTraffic(traffic, [0], farPlayer, [], dt, busStopMap, new Rng(42));
 
     expect(bus.stopTimer).toBeGreaterThanOrEqual(BUS_STOP.minDwellSeconds);
     expect(bus.stopTimer).toBeLessThanOrEqual(BUS_STOP.maxDwellSeconds);
@@ -290,7 +348,7 @@ describe('bus stop dwell', () => {
     const bus = freshVehicle({ type: 'bus', y: 9999, speed: 0, cruiseSpeed: 100, lastBusStopY: 10000, stopTimer: 0 });
     const traffic = [bus];
 
-    stepTraffic(traffic, [0], farPlayer, dt, busStopMap, new Rng(42));
+    stepTraffic(traffic, [0], farPlayer, [], dt, busStopMap, new Rng(42));
 
     expect(bus.stopTimer).toBe(0);
   });

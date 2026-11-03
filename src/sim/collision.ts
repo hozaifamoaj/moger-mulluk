@@ -1,8 +1,16 @@
-import type { CollisionClass, FineReason, PlayerVehicleState, SimEvent, TrafficVehicleState, VehicleConfig } from './types';
+import type {
+  CollisionClass,
+  FineReason,
+  PedestrianState,
+  PlayerVehicleState,
+  SimEvent,
+  TrafficVehicleState,
+  VehicleConfig,
+} from './types';
 import type { RouteMap } from './map';
-import { COLLISION, NEAR_MISS, VEHICLE_COLLISION } from './config';
+import { COLLISION, NEAR_MISS, PEDESTRIAN, VEHICLE_COLLISION } from './config';
 import { computeRoadEdges } from './road';
-import { satOverlap, satOverlapInflated, type RotatedRect } from './sat';
+import { circleOverlapsRect, satOverlap, satOverlapInflated, type RotatedRect } from './sat';
 
 /**
  * §8 / §8.1: kerb and divider contact for the player car. The car cannot
@@ -245,4 +253,40 @@ export function detectNearMisses(
   }
 
   return { nearMissCount: count, events };
+}
+
+/**
+ * §3.1 / §6 / §8: touching a pedestrian (circle) with the player's car
+ * (rotated rectangle) is an instant fail. Deactivates the hit pedestrian so
+ * the event fires once per contact, not every step the overlap continues —
+ * stopping the run itself (timer, Results screen) is M6's job; this only
+ * emits the event. Mutates `pedestrians` in place (rule 10).
+ */
+export function detectPedestrianHit(
+  player: PlayerVehicleState,
+  pedestrians: PedestrianState[],
+  config: VehicleConfig,
+): { events: SimEvent[] } {
+  const events: SimEvent[] = [];
+  const rect: RotatedRect = {
+    x: player.x,
+    y: player.y,
+    halfWidth: config.width / 2,
+    halfLength: config.length / 2,
+    heading: player.heading,
+  };
+
+  const scanMargin = config.length / 2 + PEDESTRIAN.radius + 50;
+  for (let i = 0; i < pedestrians.length; i++) {
+    const ped = pedestrians[i];
+    if (!ped.active || ped.usesOverbridge) continue;
+    if (Math.abs(ped.y - player.y) > scanMargin) continue;
+
+    if (circleOverlapsRect({ x: ped.x, y: ped.y, radius: PEDESTRIAN.radius }, rect)) {
+      ped.active = false;
+      events.push({ type: 'pedestrianHit', healthLost: 0, pedestrianId: i });
+    }
+  }
+
+  return { events };
 }
