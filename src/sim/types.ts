@@ -49,13 +49,18 @@ export type SimEventType =
   | 'nearMiss'
   | 'fine'
   | 'pedestrianHit'
-  | 'hornUsed';
+  | 'hornUsed'
+  | 'finish'
+  | 'fail';
 
 // §8.1 collision classes, by relative speed at impact.
 export type CollisionClass = 'scrape' | 'collision' | 'highSpeed';
 
 // §3.4: which rule a `fine` event was triggered by.
 export type FineReason = 'footpath' | 'wrongSide';
+
+// §3.1 Fail conditions.
+export type FailReason = 'time' | 'wrecked' | 'pedestrian';
 
 export interface SimEvent {
   type: SimEventType;
@@ -69,6 +74,8 @@ export interface SimEvent {
   fineReason?: FineReason;
   // Present only on 'pedestrianHit' events: the pool index of the pedestrian involved.
   pedestrianId?: number;
+  // Present only on 'fail' events.
+  failReason?: FailReason;
 }
 
 // §5.2 Traffic types. Rickshaw/CNG/motorcycle/parked arrive M4.
@@ -182,4 +189,17 @@ export interface SimState {
   nearMissCount: number;
   // §3.3: seconds remaining before the horn can be used again.
   hornCooldown: number;
+  // §9: running score total, including the finish/time bonus once won.
+  score: number;
+  // §10.2 Results screen tallies, not otherwise derivable from `score` alone.
+  collisionCount: number;
+  fineCount: number;
+  // §3.1/§3.5: once this leaves 'playing', `Sim.step` freezes state and stops
+  // emitting events — the presentation layer is expected to stop calling
+  // `step` and transition to the Results screen instead.
+  runStatus: 'playing' | 'finished' | 'failed';
+  failReason: FailReason | null;
+  // §9: 0 until finished (a failed run has no stars, per §9/§16: "failed run,
+  // score is not saved"); 1-3 once finished, per SCORING's thresholds.
+  stars: 0 | 1 | 2 | 3;
 }

@@ -264,3 +264,31 @@ export const HORN = {
   pedestrianSpeedBoostMultiplier: 1.5,
   pedestrianSpeedBoostSeconds: 1,
 } as const;
+
+// §3.1 Goal and end conditions. The finish zone is the last `FINISH.length`
+// px of the route (the route's last segment ends at y=0, per rule 7), and
+// counts as reached only below `FINISH.maxSpeed`.
+export const RUN = {
+  timeLimitSeconds: 180,
+  finish: {
+    length: 300, // px
+    maxSpeed: 20, // px/s
+  },
+} as const;
+
+// §9 Scoring. Only the events the spec's table lists are scored; kerb/divider
+// contact and pedestrian-hit (instant fail, not a points event) are not in
+// that table and score 0. §9's table has only two collision tiers ("Scrape"
+// and "Collision (any)") against §8.1's three collision classes
+// (scrape/collision/highSpeed) — "any" is read literally, so both 'collision'
+// and 'highSpeed' score the same -150.
+export const SCORING = {
+  finishPoints: 1000,
+  pointsPerSecondLeft: 10,
+  nearMissPoints: 25,
+  scrapePoints: -50,
+  collisionPoints: -150, // covers both 'collision' and 'highSpeed' classes
+  finePoints: -100,
+  twoStarThreshold: 1800,
+  threeStarThreshold: 2600,
+} as const;

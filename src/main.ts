@@ -3,6 +3,7 @@ import { DISPLAY } from './sim/config';
 import { BootScene } from './scenes/BootScene';
 import { MenuScene } from './scenes/MenuScene';
 import { GameScene } from './scenes/GameScene';
+import { PauseScene } from './scenes/PauseScene';
 import { ResultsScene } from './scenes/ResultsScene';
 
 const game = new Phaser.Game({
@@ -15,7 +16,7 @@ const game = new Phaser.Game({
     mode: Phaser.Scale.FIT,
     autoCenter: Phaser.Scale.CENTER_BOTH,
   },
-  scene: [BootScene, MenuScene, GameScene, ResultsScene],
+  scene: [BootScene, MenuScene, GameScene, PauseScene, ResultsScene],
 });
 
 // §3.5: the game pauses automatically when the browser tab is hidden.

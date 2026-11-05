@@ -1,0 +1,59 @@
+[
+  {
+    "id": "mohakhali-start",
+    "length": 4000,
+    "lanes": 3,
+    "divider": true,
+    "density": "medium",
+    "spawn": { "car": 5, "bus": 4, "cng": 5, "rickshaw": 2 },
+    "features": [{ "type": "busStop", "at": 500 }]
+  },
+  {
+    "id": "merge",
+    "length": 3000,
+    "lanes": 2,
+    "divider": true,
+    "density": "high",
+    "spawn": { "car": 8, "bus": 4, "cng": 6, "rickshaw": 6, "motorcycle": 4 },
+    "features": []
+  },
+  {
+    "id": "overbridge-straight",
+    "length": 8000,
+    "lanes": 3,
+    "divider": true,
+    "density": "high",
+    "spawn": { "car": 4, "bus": 2, "rickshaw": 3, "cng": 2, "motorcycle": 3 },
+    "features": [
+      { "type": "busStop", "at": 1500 },
+      { "type": "crossing", "at": 4000, "overbridge": true },
+      { "type": "parked", "at": 5500, "side": "left", "count": 2 },
+      { "type": "dividerGap", "at": 2500, "length": 120 },
+      { "type": "police", "from": 3000, "to": 6500 },
+      { "type": "jam", "from": 1200, "to": 2000 }
+    ]
+  },
+  {
+    "id": "banani-junction",
+    "length": 6000,
+    "lanes": 3,
+    "divider": true,
+    "density": "high",
+    "spawn": { "car": 5, "bus": 2, "cng": 5, "rickshaw": 9, "motorcycle": 7 },
+    "features": [
+      { "type": "parked", "at": 1500, "side": "left", "count": 3 },
+      { "type": "parked", "at": 1500, "side": "right", "count": 2 },
+      { "type": "wrongWay", "from": 2500, "to": 4000 },
+      { "type": "jam", "from": 4200, "to": 5000 }
+    ]
+  },
+  {
+    "id": "banani-finish",
+    "length": 3000,
+    "lanes": 3,
+    "divider": true,
+    "density": "low",
+    "spawn": { "car": 3, "bus": 1, "cng": 2, "rickshaw": 2 },
+    "features": []
+  }
+]

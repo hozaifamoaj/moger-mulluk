@@ -1,6 +1,6 @@
 import { describe, expect, it } from 'vitest';
 import { Sim } from '../../src/sim/sim';
-import { SIM } from '../../src/sim/config';
+import { RUN, SIM } from '../../src/sim/config';
 import { createDefaultTestMap } from '../../src/sim/map';
 import type { Input } from '../../src/sim/types';
 
@@ -82,5 +82,41 @@ describe('Sim', () => {
 
     const active = sim.state.traffic.filter((v) => v.active);
     expect(active.length).toBe(map.targetActiveCountAt(sim.state.player.y));
+  });
+
+  it('fails on time, freezes state and stops emitting events once failed', () => {
+    // Stays well outside the finish zone (never moves, with zero throttle) so
+    // the timer runs out before checkFinish could ever fire instead.
+    const sim = new Sim(1, map, map.totalLength);
+    const input: Input = { throttle: 0, brake: 0, steer: 0, horn: false };
+    const totalSteps = Math.ceil(RUN.timeLimitSeconds / SIM.stepSeconds);
+
+    let sawFail = false;
+    for (let i = 0; i < totalSteps; i++) {
+      const events = sim.step(SIM.stepSeconds, input);
+      if (events.some((e) => e.type === 'fail')) sawFail = true;
+    }
+
+    expect(sawFail).toBe(true);
+    expect(sim.state.runStatus).toBe('failed');
+    expect(sim.state.failReason).toBe('time');
+
+    const frozen = sim.state;
+    const events = sim.step(SIM.stepSeconds, input);
+    expect(events).toEqual([]);
+    expect(sim.state).toBe(frozen);
+  });
+
+  it('gives the same score for the same seed and input sequence', () => {
+    const a = new Sim(7, map, 10000);
+    const b = new Sim(7, map, 10000);
+    const input: Input = { throttle: 1, brake: 0, steer: 0, horn: false };
+
+    for (let i = 0; i < 500; i++) {
+      a.step(SIM.stepSeconds, input);
+      b.step(SIM.stepSeconds, input);
+    }
+
+    expect(a.state.score).toBe(b.state.score);
   });
 });

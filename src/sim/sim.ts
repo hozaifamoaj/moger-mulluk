@@ -15,6 +15,8 @@ import { createTrafficPool, stepTraffic } from './traffic';
 import { createPedestrianPool, placeWaitingPassengers, spawnPedestrians, stepPedestrians } from './pedestrian';
 import { stepHorn } from './horn';
 import { despawnBehindPlayer, fillInitialTraffic, placeParkedVehicles, spawnTraffic } from './spawner';
+import { checkFail, checkFinish } from './run';
+import { finishBonus, scoreForEvent, starsForScore } from './scoring';
 import { Rng } from './rng';
 
 /**
@@ -73,6 +75,12 @@ export class Sim {
       invulnerability: 0,
       nearMissCount: 0,
       hornCooldown: 0,
+      score: 0,
+      collisionCount: 0,
+      fineCount: 0,
+      runStatus: 'playing',
+      failReason: null,
+      stars: 0,
     };
   }
 
@@ -85,6 +93,12 @@ export class Sim {
   }
 
   step(dt: number, input: Input): SimEvent[] {
+    // §3.1/§3.5: once the run has ended, freeze state and stop emitting
+    // events — the presentation layer is expected to stop calling `step`
+    // once it sees a 'finish'/'fail' event and move to the Results screen,
+    // but this guard keeps replays/tests safe if it's called anyway.
+    if (this._state.runStatus !== 'playing') return [];
+
     const effectiveConfig = applyHealthPenalty(VEHICLES.car, this._state.player.health);
     const movedPlayer = stepVehicle(this._state.player, input, effectiveConfig, dt);
     const { state: playerAfterRoad, events: roadEvents } = resolveRoadContact(
@@ -149,17 +163,50 @@ export class Sim {
     );
     spawnPedestrians(this._pedestrians, this._rng, this._map, this._pedestrianSpawnTimers, dt);
 
+    const elapsedSeconds = this._state.elapsedSeconds + dt;
+    const scoredEvents = [...collisionEvents, ...nearMissEvents, ...fineEvents];
+    const scoreDelta = scoredEvents.reduce((sum, event) => sum + scoreForEvent(event), 0);
+    const collisionCount =
+      this._state.collisionCount + collisionEvents.filter((event) => event.collisionClass !== undefined).length;
+    const fineCount = this._state.fineCount + fineEvents.length;
+
+    const pedestrianHitThisStep = pedestrianHitEvents.length > 0;
+    const failReason = checkFail(playerAfterFine, elapsedSeconds, pedestrianHitThisStep);
+    const finished = failReason === null && checkFinish(playerAfterFine);
+
+    const runStatus = failReason !== null ? 'failed' : finished ? 'finished' : 'playing';
+    const score = this._state.score + scoreDelta + (finished ? finishBonus(elapsedSeconds) : 0);
+    const stars = finished ? starsForScore(score) : 0;
+
+    const runEvents: SimEvent[] = [];
+    if (finished) runEvents.push({ type: 'finish', healthLost: 0 });
+    if (failReason !== null) runEvents.push({ type: 'fail', healthLost: 0, failReason });
+
     this._state = {
       stepCount: this._state.stepCount + 1,
-      elapsedSeconds: this._state.elapsedSeconds + dt,
+      elapsedSeconds,
       player: playerAfterFine,
       traffic: this._traffic,
       pedestrians: this._pedestrians,
       invulnerability,
       nearMissCount,
       hornCooldown,
+      score,
+      collisionCount,
+      fineCount,
+      runStatus,
+      failReason,
+      stars,
     };
 
-    return [...roadEvents, ...hornEvents, ...collisionEvents, ...nearMissEvents, ...fineEvents, ...pedestrianHitEvents];
+    return [
+      ...roadEvents,
+      ...hornEvents,
+      ...collisionEvents,
+      ...nearMissEvents,
+      ...fineEvents,
+      ...pedestrianHitEvents,
+      ...runEvents,
+    ];
   }
 }

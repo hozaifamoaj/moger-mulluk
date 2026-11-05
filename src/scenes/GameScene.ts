@@ -1,12 +1,16 @@
 import Phaser from 'phaser';
-import { DISPLAY, ROAD, SIM, VEHICLES, VEHICLE_COLLISION, PEDESTRIAN, HORN } from '../sim/config';
+import { DISPLAY, ROAD, RUN, SIM, VEHICLES, VEHICLE_COLLISION, PEDESTRIAN, HORN } from '../sim/config';
 import { computeRoadEdges } from '../sim/road';
 import { Sim } from '../sim/sim';
 import { RouteMap, validateSegments } from '../sim/map';
 import { KeyboardInput } from '../ui/KeyboardInput';
-import type { SimEvent, TrafficVehicleType } from '../sim/types';
+import type { FailReason, SimEvent, TrafficVehicleType } from '../sim/types';
 
-const MAP_URL = 'assets/maps/m4-demo.json';
+const MAP_URL = 'assets/maps/mohakhali-banani.json';
+
+// §3.5: a brief non-interactive delay before the sim starts stepping — the
+// timer (which only advances inside Sim.step) correctly doesn't count it.
+const COUNTDOWN_SECONDS = 3;
 
 // Greybox placeholder colors (rule 13: replaced by sprites in M9). Sizes and
 // positions come from src/sim/config.ts, not from these.
@@ -39,7 +43,11 @@ const COLORS = {
 } as const;
 const LANE_MARKING = { dash: 40, gap: 40, width: 3 } as const;
 const CAMERA_PLAYER_SCREEN_FRACTION = 0.7; // §build-plan M2: car sits at ~70% of screen height
-const HEALTH_BAR = { x: 8, y: 90, width: 150, height: 14 } as const;
+// §10.1 HUD layout: top-left (score/speed, health), top-center (timer),
+// top-right (pause), top edge (route progress bar).
+const PROGRESS_BAR = { height: 6 } as const;
+const HUD_TEXT_Y = PROGRESS_BAR.height + 6;
+const HEALTH_BAR = { x: 8, y: HUD_TEXT_Y + 26, width: 150, height: 14 } as const;
 const HORN_BAR = { x: 8, y: HEALTH_BAR.y + HEALTH_BAR.height + 6, width: 150, height: 10 } as const;
 const BLINK_INTERVAL_MS = 100; // §8.1: player sprite blinks while invulnerable
 // §6: overbridge is a cosmetic-only structure (never collidable, §6/§8) drawn
@@ -63,6 +71,13 @@ export class GameScene extends Phaser.Scene {
   private debugText!: Phaser.GameObjects.Text;
   private debugVisible = true;
   private accumulatorMs = 0;
+  private isPaused = false;
+  private countdownRemaining = COUNTDOWN_SECONDS;
+  private countdownText!: Phaser.GameObjects.Text;
+  private scoreSpeedText!: Phaser.GameObjects.Text;
+  private timerText!: Phaser.GameObjects.Text;
+  private progressBarFill!: Phaser.GameObjects.Rectangle;
+  private ended = false;
 
   constructor() {
     super('Game');
@@ -73,9 +88,18 @@ export class GameScene extends Phaser.Scene {
   }
 
   create(): void {
+    // Phaser scene instances persist across restarts (scene.start('Game') on
+    // an already-created scene reuses the instance), so fields with
+    // non-falsy defaults must be reset explicitly here.
+    this.isPaused = false;
+    this.ended = false;
+    this.countdownRemaining = COUNTDOWN_SECONDS;
+    this.accumulatorMs = 0;
+
     this.map = this.loadMap();
 
-    const seed = Date.now();
+    const seedParam = new URLSearchParams(window.location.search).get('seed');
+    const seed = seedParam !== null && seedParam !== '' ? Number(seedParam) : Date.now();
     this.sim = new Sim(seed, this.map);
     this.input_ = new KeyboardInput(this);
 
@@ -116,8 +140,57 @@ export class GameScene extends Phaser.Scene {
       .setScrollFactor(0)
       .setDepth(1001);
 
+    this.add
+      .rectangle(0, 0, DISPLAY.width, PROGRESS_BAR.height, COLORS.healthBarBg)
+      .setOrigin(0, 0)
+      .setScrollFactor(0)
+      .setDepth(1000);
+    this.progressBarFill = this.add
+      .rectangle(0, 0, 0, PROGRESS_BAR.height, COLORS.hornBarReady)
+      .setOrigin(0, 0)
+      .setScrollFactor(0)
+      .setDepth(1001);
+
+    this.scoreSpeedText = this.add
+      .text(8, HUD_TEXT_Y, '', { fontSize: '16px', color: '#ffffff', backgroundColor: '#000000a0', padding: { x: 6, y: 4 } })
+      .setScrollFactor(0)
+      .setDepth(1000);
+
+    this.timerText = this.add
+      .text(DISPLAY.width / 2, HUD_TEXT_Y, '', {
+        fontSize: '18px',
+        color: '#ffffff',
+        backgroundColor: '#000000a0',
+        padding: { x: 8, y: 4 },
+      })
+      .setOrigin(0.5, 0)
+      .setScrollFactor(0)
+      .setDepth(1000);
+
+    const pauseButton = this.add
+      .text(DISPLAY.width - 8, HUD_TEXT_Y, 'Pause', {
+        fontSize: '16px',
+        color: '#ffffff',
+        backgroundColor: '#000000a0',
+        padding: { x: 8, y: 4 },
+      })
+      .setOrigin(1, 0)
+      .setScrollFactor(0)
+      .setDepth(1000)
+      .setInteractive({ useHandCursor: true });
+    pauseButton.on('pointerup', () => this.pauseGame());
+
+    this.countdownText = this.add
+      .text(DISPLAY.width / 2, DISPLAY.height / 2, '', { fontSize: '96px', color: '#ffffff' })
+      .setOrigin(0.5)
+      .setScrollFactor(0)
+      .setDepth(2000);
+
+    this.input.keyboard?.addKey('ESC').on('down', () => this.pauseGame());
+    this.input.keyboard?.addKey('P').on('down', () => this.pauseGame());
+
     this.debugText = this.add
-      .text(8, 8, '', { fontSize: '16px', color: '#ffffff', backgroundColor: '#000000a0', padding: { x: 6, y: 4 } })
+      .text(8, 76, '', { fontSize: '16px', color: '#ffffff', backgroundColor: '#000000a0', padding: { x: 6, y: 4 } })
       .setScrollFactor(0)
       .setDepth(1000);
 
@@ -141,6 +214,14 @@ export class GameScene extends Phaser.Scene {
   }
 
   update(_time: number, deltaMs: number): void {
+    if (this.countdownRemaining > 0) {
+      this.countdownRemaining -= deltaMs / 1000;
+      this.countdownText.setText(this.countdownRemaining > 0 ? Math.ceil(this.countdownRemaining).toString() : 'GO!');
+      this.render();
+      return;
+    }
+    if (this.countdownText.text !== '') this.countdownText.setText('');
+
     this.accumulatorMs += Math.min(deltaMs, SIM.maxFrameDeltaMs);
     const stepMs = SIM.stepSeconds * 1000;
 
@@ -158,11 +239,47 @@ export class GameScene extends Phaser.Scene {
     for (const event of events) {
       if (event.type === 'nearMiss') this.showFloatingText('Near miss!', COLORS.nearMissText);
       if (event.type === 'fine') this.showFloatingText('Fine!', COLORS.fineText);
-      // §8: the actual fail-state halt (timer stop, Results screen) is M6's
-      // job; this scene only acknowledges the hit happened.
       if (event.type === 'pedestrianHit') this.showFloatingText('Pedestrian hit!', COLORS.pedestrianHitText);
       if (event.type === 'hornUsed') this.showFloatingText('Honk!', COLORS.hornText);
+      if (event.type === 'finish') this.endRun('win');
+      if (event.type === 'fail') this.endRun('fail', event.failReason);
     }
+  }
+
+  // §3.5: hands off to the Results screen with everything it needs to
+  // render the outcome; the sim itself has already frozen (runStatus !==
+  // 'playing' makes further step() calls no-ops).
+  private endRun(outcome: 'win' | 'fail', failReason?: FailReason): void {
+    if (this.ended) return;
+    this.ended = true;
+
+    const { score, elapsedSeconds, nearMissCount, collisionCount, fineCount, stars } = this.sim.state;
+    this.scene.start('Results', {
+      outcome,
+      failReason: failReason ?? null,
+      score,
+      durationSeconds: elapsedSeconds,
+      nearMissCount,
+      collisionCount,
+      fineCount,
+      stars,
+      seed: this.sim.seed,
+    });
+  }
+
+  // §3.5 Paused state: a launched overlay scene, not a sim-side flag — the
+  // sim simply isn't stepped while paused, so elapsed time (and therefore
+  // the timer) correctly doesn't advance.
+  private pauseGame(): void {
+    if (this.isPaused || this.countdownRemaining > 0 || this.ended) return;
+    this.isPaused = true;
+    this.scene.pause();
+    this.scene.launch('Pause');
+  }
+
+  // Called by PauseScene's Resume button after it resumes this scene.
+  resumeFromPause(): void {
+    this.isPaused = false;
   }
 
   // §8 / §9: floating acknowledgement text for a near miss or fine, tweened up and out.
@@ -192,6 +309,7 @@ export class GameScene extends Phaser.Scene {
     this.renderPedestrians();
     this.renderHealthBar();
     this.renderHornBar();
+    this.renderHud();
     this.applyCamera();
 
     if (this.debugVisible) {
@@ -256,6 +374,19 @@ export class GameScene extends Phaser.Scene {
     const ready = this.sim.state.hornCooldown <= 0;
     this.hornBarFill.setSize(HORN_BAR.width * Math.max(0, Math.min(1, fraction)), HORN_BAR.height);
     this.hornBarFill.setFillStyle(ready ? COLORS.hornBarReady : COLORS.hornBarCharging);
+  }
+
+  // §10.1 HUD: score/speed (top-left), countdown timer (top-center), and
+  // route progress (top edge bar, fraction of distance travelled so far).
+  private renderHud(): void {
+    const { player, score } = this.sim.state;
+    this.scoreSpeedText.setText(`Score: ${Math.round(score)}   Speed: ${Math.abs(player.speed).toFixed(0)} px/s`);
+
+    const secondsLeft = Math.max(0, RUN.timeLimitSeconds - this.sim.state.elapsedSeconds);
+    this.timerText.setText(Math.ceil(secondsLeft).toString());
+
+    const fraction = Math.max(0, Math.min(1, (this.map.totalLength - player.y) / this.map.totalLength));
+    this.progressBarFill.setSize(DISPLAY.width * fraction, PROGRESS_BAR.height);
   }
 
   private trafficColor(type: TrafficVehicleType): number {
