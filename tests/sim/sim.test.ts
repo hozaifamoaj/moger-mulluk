@@ -1,6 +1,6 @@
 import { describe, expect, it } from 'vitest';
 import { Sim } from '../../src/sim/sim';
-import { RUN, SIM } from '../../src/sim/config';
+import { RUN, SIM, VEHICLES } from '../../src/sim/config';
 import { createDefaultTestMap } from '../../src/sim/map';
 import type { Input } from '../../src/sim/types';
 
@@ -49,6 +49,12 @@ describe('Sim', () => {
     sim.step(SIM.stepSeconds, { throttle: 0, brake: 0, steer: 0, horn: false });
     expect(sim.state.stepCount).toBe(1);
     expect(sim.state.elapsedSeconds).toBeCloseTo(SIM.stepSeconds, 10);
+  });
+
+  it('uses the motorcycle config when constructed with vehicleId "motorcycle"', () => {
+    const sim = new Sim(1, map, 5000, 'motorcycle');
+    expect(sim.state.player.health).toBe(VEHICLES.motorcycle.health);
+    expect(sim.state.player.health).not.toBe(VEHICLES.car.health);
   });
 
   it('fills the traffic pool to the target density on construction', () => {

@@ -1,4 +1,4 @@
-import type { Input, PedestrianState, SimEvent, SimState, TrafficVehicleState } from './types';
+import type { Input, PedestrianState, PlayableVehicleId, SimEvent, SimState, TrafficVehicleState } from './types';
 import type { RouteMap } from './map';
 import { VEHICLES } from './config';
 import { stepVehicle, applyHealthPenalty } from './vehicle';
@@ -35,12 +35,19 @@ export class Sim {
   private readonly _pedestrians: PedestrianState[];
   private readonly _pedestrianSpawnTimers: number[];
   private readonly _map: RouteMap;
+  private readonly _config: (typeof VEHICLES)[PlayableVehicleId];
   private _state: SimState;
 
-  constructor(seed: number, map: RouteMap = createDefaultTestMap(), startY: number = map.totalLength) {
+  constructor(
+    seed: number,
+    map: RouteMap = createDefaultTestMap(),
+    startY: number = map.totalLength,
+    vehicleId: PlayableVehicleId = 'car',
+  ) {
     this._seed = seed;
     this._rng = new Rng(seed);
     this._map = map;
+    this._config = VEHICLES[vehicleId];
 
     const edges = computeRoadEdges(map.laneCountAt(startY));
     const startX = (edges.footpathPlayerRightX + edges.dividerLeftX) / 2;
@@ -50,7 +57,7 @@ export class Sim {
     fillInitialTraffic(
       this._traffic,
       this._rng,
-      { x: startX, y: startY, width: VEHICLES.car.width, length: VEHICLES.car.length },
+      { x: startX, y: startY, width: this._config.width, length: this._config.length },
       map,
     );
 
@@ -66,7 +73,7 @@ export class Sim {
         y: startY,
         heading: 0,
         speed: 0,
-        health: VEHICLES.car.health,
+        health: this._config.health,
         kerbCooldown: 0,
         fineActive: false,
       },
@@ -99,11 +106,11 @@ export class Sim {
     // but this guard keeps replays/tests safe if it's called anyway.
     if (this._state.runStatus !== 'playing') return [];
 
-    const effectiveConfig = applyHealthPenalty(VEHICLES.car, this._state.player.health);
+    const effectiveConfig = applyHealthPenalty(this._config, this._state.player.health);
     const movedPlayer = stepVehicle(this._state.player, input, effectiveConfig, dt);
     const { state: playerAfterRoad, events: roadEvents } = resolveRoadContact(
       movedPlayer,
-      VEHICLES.car,
+      this._config,
       dt,
       this._map,
     );
@@ -127,7 +134,7 @@ export class Sim {
     stepTraffic(
       this._traffic,
       activeIndices,
-      { x: playerAfterRoad.x, y: playerAfterRoad.y, width: VEHICLES.car.width, length: VEHICLES.car.length, speed: playerAfterRoad.speed },
+      { x: playerAfterRoad.x, y: playerAfterRoad.y, width: this._config.width, length: this._config.length, speed: playerAfterRoad.speed },
       this._pedestrians,
       dt,
       this._map,
@@ -140,25 +147,25 @@ export class Sim {
       state: playerAfterCollision,
       invulnerability,
       events: collisionEvents,
-    } = resolveVehicleCollisions(playerAfterRoad, this._traffic, this._state.invulnerability, VEHICLES.car, dt);
+    } = resolveVehicleCollisions(playerAfterRoad, this._traffic, this._state.invulnerability, this._config, dt);
 
     const { nearMissCount, events: nearMissEvents } = detectNearMisses(
       playerAfterCollision,
       this._traffic,
-      VEHICLES.car,
+      this._config,
       this._state.nearMissCount,
     );
 
-    const { fineActive, events: fineEvents } = detectFine(playerAfterCollision, VEHICLES.car, this._map);
+    const { fineActive, events: fineEvents } = detectFine(playerAfterCollision, this._config, this._map);
     const playerAfterFine = { ...playerAfterCollision, fineActive };
 
-    const { events: pedestrianHitEvents } = detectPedestrianHit(playerAfterFine, this._pedestrians, VEHICLES.car);
+    const { events: pedestrianHitEvents } = detectPedestrianHit(playerAfterFine, this._pedestrians, this._config);
 
     despawnBehindPlayer(this._traffic, playerAfterFine.y);
     spawnTraffic(
       this._traffic,
       this._rng,
-      { x: playerAfterFine.x, y: playerAfterFine.y, width: VEHICLES.car.width, length: VEHICLES.car.length },
+      { x: playerAfterFine.x, y: playerAfterFine.y, width: this._config.width, length: this._config.length },
       this._map,
     );
     spawnPedestrians(this._pedestrians, this._rng, this._map, this._pedestrianSpawnTimers, dt);

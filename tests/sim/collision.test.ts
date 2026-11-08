@@ -6,6 +6,7 @@ import { VEHICLES, COLLISION, SIM, VEHICLE_COLLISION, PEDESTRIAN } from '../../s
 import type { PedestrianState, PlayerVehicleState, TrafficVehicleState } from '../../src/sim/types';
 
 const car = VEHICLES.car;
+const moto = VEHICLES.motorcycle;
 const dt = SIM.stepSeconds;
 const edges = computeRoadEdges();
 const map = createDefaultTestMap();
@@ -130,6 +131,54 @@ describe('resolveRoadContact', () => {
   });
 });
 
+describe('resolveRoadContact with footpathAllowed vehicles (motorcycle)', () => {
+  it('lets the motorcycle ride the player-side footpath untouched (no push-back, no health loss)', () => {
+    const intrudingX = edges.footpathPlayerRightX - 10; // well onto the footpath
+    const state = stateAt(intrudingX, { speed: moto.maxSpeed * 0.5, health: moto.health });
+
+    const { state: next, events } = resolveRoadContact(state, moto, dt, map);
+
+    expect(next.x).toBe(state.x);
+    expect(next.speed).toBe(state.speed);
+    expect(next.health).toBe(moto.health);
+    expect(events).toHaveLength(0);
+  });
+
+  it('lets the motorcycle ride the opposite-side footpath untouched', () => {
+    const gapMap = new RouteMap([
+      {
+        id: 'gap-test',
+        length: 20000,
+        lanes: 3,
+        divider: true,
+        density: 'low',
+        spawn: {},
+        features: [{ type: 'dividerGap', at: 10000, length: 20000 }],
+      },
+    ]);
+    const intrudingX = edges.footpathOppositeLeftX + 10; // well onto the opposite footpath
+    const state = stateAt(intrudingX, { y: 10000, speed: moto.maxSpeed * 0.5, health: moto.health });
+
+    const { state: next, events } = resolveRoadContact(state, moto, dt, gapMap);
+
+    expect(next.x).toBe(state.x);
+    expect(next.health).toBe(moto.health);
+    expect(events).toHaveLength(0);
+  });
+
+  it('still pushes the motorcycle back off the divider outside a mapped gap', () => {
+    const intrudingX = edges.dividerLeftX - moto.width / 2 + 5; // 5px over the divider line
+    const state = stateAt(intrudingX, { speed: moto.maxSpeed * 0.5, health: moto.health });
+    const preSpeed = state.speed;
+
+    const { state: next, events } = resolveRoadContact(state, moto, dt, map);
+
+    expect(next.x + moto.width / 2).toBeCloseTo(edges.dividerLeftX, 5);
+    expect(next.speed).toBeCloseTo(preSpeed * COLLISION.kerbSpeedMultiplier, 5);
+    expect(events).toContainEqual({ type: 'dividerContact', healthLost: COLLISION.kerbHealthLoss });
+  });
+});
+
 describe('detectFine', () => {
   const policeMap = new RouteMap([
     {
@@ -177,6 +226,24 @@ describe('detectFine', () => {
 
     expect(fineActive).toBe(false);
     expect(events).toHaveLength(0);
+  });
+
+  it('still fines a motorcycle for riding the footpath in a police zone, even though footpathAllowed lets it ride there', () => {
+    const onFootpath = stateAt(edges.footpathPlayerRightX - 10, { y: 10000, speed: moto.maxSpeed * 0.5, health: moto.health });
+
+    const { fineActive, events } = detectFine(onFootpath, moto, policeMap);
+
+    expect(fineActive).toBe(true);
+    expect(events).toContainEqual({ type: 'fine', healthLost: 0, fineReason: 'footpath' });
+  });
+
+  it('still fines a motorcycle on the wrong side in a police zone', () => {
+    const onWrongSide = stateAt(edges.dividerLeftX + 20, { y: 10000, speed: moto.maxSpeed * 0.5, health: moto.health });
+
+    const { fineActive, events } = detectFine(onWrongSide, moto, policeMap);
+
+    expect(fineActive).toBe(true);
+    expect(events).toContainEqual({ type: 'fine', healthLost: 0, fineReason: 'wrongSide' });
   });
 });
 

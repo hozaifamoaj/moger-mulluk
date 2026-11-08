@@ -42,14 +42,16 @@ export function resolveRoadContact(
   let health = state.health;
   let kerbCooldown = Math.max(0, state.kerbCooldown - dt);
 
-  const carLeft = x - halfExtentX;
-  if (carLeft < edges.footpathPlayerRightX) {
-    const preContactSpeed = speed;
-    x += edges.footpathPlayerRightX - carLeft;
-    speed *= COLLISION.kerbSpeedMultiplier;
-    const result = applyContactDamage('kerbContact', preContactSpeed, config, health, kerbCooldown, events);
-    health = result.health;
-    kerbCooldown = result.kerbCooldown;
+  if (!config.footpathAllowed) {
+    const carLeft = x - halfExtentX;
+    if (carLeft < edges.footpathPlayerRightX) {
+      const preContactSpeed = speed;
+      x += edges.footpathPlayerRightX - carLeft;
+      speed *= COLLISION.kerbSpeedMultiplier;
+      const result = applyContactDamage('kerbContact', preContactSpeed, config, health, kerbCooldown, events);
+      health = result.health;
+      kerbCooldown = result.kerbCooldown;
+    }
   }
 
   if (!map.dividerGapAt(state.y)) {
@@ -64,14 +66,16 @@ export function resolveRoadContact(
     }
   }
 
-  const carRightEdge = x + halfExtentX;
-  if (carRightEdge > edges.footpathOppositeLeftX) {
-    const preContactSpeed = speed;
-    x -= carRightEdge - edges.footpathOppositeLeftX;
-    speed *= COLLISION.kerbSpeedMultiplier;
-    const result = applyContactDamage('kerbContact', preContactSpeed, config, health, kerbCooldown, events);
-    health = result.health;
-    kerbCooldown = result.kerbCooldown;
+  if (!config.footpathAllowed) {
+    const carRightEdge = x + halfExtentX;
+    if (carRightEdge > edges.footpathOppositeLeftX) {
+      const preContactSpeed = speed;
+      x -= carRightEdge - edges.footpathOppositeLeftX;
+      speed *= COLLISION.kerbSpeedMultiplier;
+      const result = applyContactDamage('kerbContact', preContactSpeed, config, health, kerbCooldown, events);
+      health = result.health;
+      kerbCooldown = result.kerbCooldown;
+    }
   }
 
   return { state: { ...state, x, speed, health, kerbCooldown }, events };

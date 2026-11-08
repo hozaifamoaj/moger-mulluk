@@ -2,6 +2,8 @@ import Phaser from 'phaser';
 import { DISPLAY } from './sim/config';
 import { BootScene } from './scenes/BootScene';
 import { MenuScene } from './scenes/MenuScene';
+import { VehicleSelectScene } from './scenes/VehicleSelectScene';
+import { SettingsScene } from './scenes/SettingsScene';
 import { GameScene } from './scenes/GameScene';
 import { PauseScene } from './scenes/PauseScene';
 import { ResultsScene } from './scenes/ResultsScene';
@@ -16,7 +18,7 @@ const game = new Phaser.Game({
     mode: Phaser.Scale.FIT,
     autoCenter: Phaser.Scale.CENTER_BOTH,
   },
-  scene: [BootScene, MenuScene, GameScene, PauseScene, ResultsScene],
+  scene: [BootScene, MenuScene, VehicleSelectScene, SettingsScene, GameScene, PauseScene, ResultsScene],
 });
 
 // §3.5: the game pauses automatically when the browser tab is hidden.

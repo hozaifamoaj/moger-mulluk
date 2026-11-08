@@ -1,7 +1,10 @@
 import Phaser from 'phaser';
 import { DISPLAY } from '../sim/config';
-import type { FailReason } from '../sim/types';
+import type { FailReason, PlayableVehicleId } from '../sim/types';
 import * as storage from '../storage';
+import { bestKey, getAllBests, persistUnlocks, totalStars, type BestResult } from '../vehicles';
+import { getSettings } from '../settings';
+import { FONT_FAMILY, t, type StringKey } from '../ui/strings';
 
 export interface ResultsData {
   outcome: 'win' | 'fail';
@@ -13,22 +16,13 @@ export interface ResultsData {
   fineCount: number;
   stars: 0 | 1 | 2 | 3;
   seed: number;
+  vehicleId: PlayableVehicleId;
 }
 
-interface BestResult {
-  score: number;
-  stars: 0 | 1 | 2 | 3;
-}
-
-// §12.6: one best result per vehicle. Only "car" exists until M7 adds
-// vehicle select, but the key is already vehicle-scoped so M7 doesn't need
-// to migrate saved data.
-const BEST_KEY = 'best.car';
-
-const FAIL_REASON_LABEL: Record<FailReason, string> = {
-  time: "Time's up",
-  wrecked: 'Your car is wrecked',
-  pedestrian: 'You hit a pedestrian',
+const FAIL_REASON_LABEL: Record<FailReason, StringKey> = {
+  time: 'failTime',
+  wrecked: 'failWrecked',
+  pedestrian: 'failPedestrian',
 };
 
 function formatDuration(seconds: number): string {
@@ -47,6 +41,7 @@ export class ResultsScene extends Phaser.Scene {
   }
 
   create(data: ResultsData): void {
+    const { language } = getSettings();
     const centerX = DISPLAY.width / 2;
 
     // Opaque, since Game (and whatever's behind it) may still be active
@@ -55,15 +50,21 @@ export class ResultsScene extends Phaser.Scene {
 
     // §9/§16: a failed run has no stars and isn't a "result" to best against.
     if (data.outcome === 'win') {
-      const best = storage.get<BestResult>(BEST_KEY, { score: -Infinity, stars: 0 });
+      const key = bestKey(data.vehicleId);
+      const best = storage.get<BestResult>(key, { score: -Infinity, stars: 0 });
       if (data.score > best.score) {
-        storage.set<BestResult>(BEST_KEY, { score: data.score, stars: data.stars });
+        storage.set<BestResult>(key, { score: data.score, stars: data.stars });
       }
+      persistUnlocks(totalStars(getAllBests()));
     }
 
-    const title = data.outcome === 'win' ? 'Finish!' : FAIL_REASON_LABEL[data.failReason ?? 'time'];
+    const title = data.outcome === 'win' ? t('finish', language) : t(FAIL_REASON_LABEL[data.failReason ?? 'time'], language);
     this.add
-      .text(centerX, 150, title, { fontSize: '40px', color: data.outcome === 'win' ? '#55cc55' : '#cc5555' })
+      .text(centerX, 150, title, {
+        fontSize: '40px',
+        color: data.outcome === 'win' ? '#55cc55' : '#cc5555',
+        fontFamily: FONT_FAMILY,
+      })
       .setOrigin(0.5);
 
     this.add
@@ -71,15 +72,21 @@ export class ResultsScene extends Phaser.Scene {
       .setOrigin(0.5);
 
     const lines = [
-      `Score: ${Math.round(data.score)}`,
-      `Time: ${formatDuration(data.durationSeconds)}`,
-      `Near misses: ${data.nearMissCount}`,
-      `Collisions: ${data.collisionCount}`,
-      `Fines: ${data.fineCount}`,
-      `Seed: ${data.seed}`,
+      `${t('scoreLabel', language)}: ${Math.round(data.score)}`,
+      `${t('timeLabel', language)}: ${formatDuration(data.durationSeconds)}`,
+      `${t('nearMissesLabel', language)}: ${data.nearMissCount}`,
+      `${t('collisionsLabel', language)}: ${data.collisionCount}`,
+      `${t('finesLabel', language)}: ${data.fineCount}`,
+      `${t('seedLabel', language)}: ${data.seed}`,
     ];
     this.add
-      .text(centerX, 280, lines.join('\n'), { fontSize: '22px', color: '#ffffff', align: 'center', lineSpacing: 10 })
+      .text(centerX, 280, lines.join('\n'), {
+        fontSize: '22px',
+        color: '#ffffff',
+        align: 'center',
+        lineSpacing: 10,
+        fontFamily: FONT_FAMILY,
+      })
       .setOrigin(0.5, 0);
 
     const makeButton = (y: number, label: string, onClick: () => void): void => {
@@ -89,13 +96,15 @@ export class ResultsScene extends Phaser.Scene {
           color: '#ffffff',
           backgroundColor: '#2a7a4f',
           padding: { x: 24, y: 10 },
+          fontFamily: FONT_FAMILY,
         })
         .setOrigin(0.5)
         .setInteractive({ useHandCursor: true })
         .on('pointerup', onClick);
     };
 
-    makeButton(600, 'Retry', () => this.scene.start('Game'));
-    makeButton(660, 'Menu', () => this.scene.start('Menu'));
+    makeButton(540, t('retry', language), () => this.scene.start('Game', { vehicleId: data.vehicleId }));
+    makeButton(600, t('changeVehicle', language), () => this.scene.start('VehicleSelect'));
+    makeButton(660, t('menu', language), () => this.scene.start('Menu'));
   }
 }

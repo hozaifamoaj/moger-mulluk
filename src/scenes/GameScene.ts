@@ -4,7 +4,10 @@ import { computeRoadEdges } from '../sim/road';
 import { Sim } from '../sim/sim';
 import { RouteMap, validateSegments } from '../sim/map';
 import { KeyboardInput } from '../ui/KeyboardInput';
-import type { FailReason, SimEvent, TrafficVehicleType } from '../sim/types';
+import { TouchInput } from '../ui/TouchInput';
+import { getSettings, type Language } from '../settings';
+import { FONT_FAMILY, t } from '../ui/strings';
+import type { FailReason, PlayableVehicleId, SimEvent, TrafficVehicleType, VehicleConfig } from '../sim/types';
 
 const MAP_URL = 'assets/maps/mohakhali-banani.json';
 
@@ -54,15 +57,18 @@ const BLINK_INTERVAL_MS = 100; // §8.1: player sprite blinks while invulnerable
 // as a translucent band spanning the full road width at the crossing's y.
 const OVERBRIDGE_VISUAL = { thickness: 24, alpha: 0.5, depth: 50 } as const;
 
-// §3.2 Controls: on-screen reminder of the keyboard bindings. Touch buttons
-// (gas/brake/steer/horn, bottom corners per spec) replace this in M7; until
-// then nothing else on screen shows the player which key does what.
-const CONTROLS_HINT_TEXT = 'W/↑ Gas   S/↓ Brake   A/D or ←/→ Steer   Space Horn';
+export interface GameSceneData {
+  vehicleId?: PlayableVehicleId;
+}
 
 export class GameScene extends Phaser.Scene {
   private sim!: Sim;
   private map!: RouteMap;
-  private input_!: KeyboardInput;
+  private vehicleId!: PlayableVehicleId;
+  private vehicleConfig!: VehicleConfig;
+  private language!: Language;
+  private keyboardInput!: KeyboardInput;
+  private touchInput: TouchInput | null = null;
   private car!: Phaser.GameObjects.Rectangle;
   private trafficRects!: Phaser.GameObjects.Rectangle[];
   private pedestrianCircles!: Phaser.GameObjects.Arc[];
@@ -87,7 +93,7 @@ export class GameScene extends Phaser.Scene {
     this.load.json('map', MAP_URL);
   }
 
-  create(): void {
+  create(data: GameSceneData): void {
     // Phaser scene instances persist across restarts (scene.start('Game') on
     // an already-created scene reuses the instance), so fields with
     // non-falsy defaults must be reset explicitly here.
@@ -95,13 +101,20 @@ export class GameScene extends Phaser.Scene {
     this.ended = false;
     this.countdownRemaining = COUNTDOWN_SECONDS;
     this.accumulatorMs = 0;
+    this.vehicleId = data?.vehicleId ?? 'car';
+    this.vehicleConfig = VEHICLES[this.vehicleId];
+    this.language = getSettings().language;
+
+    const language = this.language;
+    const vehicleConfig = this.vehicleConfig;
 
     this.map = this.loadMap();
 
     const seedParam = new URLSearchParams(window.location.search).get('seed');
     const seed = seedParam !== null && seedParam !== '' ? Number(seedParam) : Date.now();
-    this.sim = new Sim(seed, this.map);
-    this.input_ = new KeyboardInput(this);
+    this.sim = new Sim(seed, this.map, this.map.totalLength, this.vehicleId);
+    this.keyboardInput = new KeyboardInput(this);
+    this.touchInput = this.sys.game.device.input.touch ? new TouchInput(this) : null;
 
     this.drawRoad();
     this.drawOverbridges();
@@ -115,7 +128,7 @@ export class GameScene extends Phaser.Scene {
     );
 
     this.car = this.add
-      .rectangle(this.sim.state.player.x, this.sim.state.player.y, VEHICLES.car.width, VEHICLES.car.length, COLORS.car)
+      .rectangle(this.sim.state.player.x, this.sim.state.player.y, vehicleConfig.width, vehicleConfig.length, COLORS.car)
       .setOrigin(0.5);
 
     this.add
@@ -152,7 +165,13 @@ export class GameScene extends Phaser.Scene {
       .setDepth(1001);
 
     this.scoreSpeedText = this.add
-      .text(8, HUD_TEXT_Y, '', { fontSize: '16px', color: '#ffffff', backgroundColor: '#000000a0', padding: { x: 6, y: 4 } })
+      .text(8, HUD_TEXT_Y, '', {
+        fontSize: '16px',
+        color: '#ffffff',
+        backgroundColor: '#000000a0',
+        padding: { x: 6, y: 4 },
+        fontFamily: FONT_FAMILY,
+      })
       .setScrollFactor(0)
       .setDepth(1000);
 
@@ -162,17 +181,19 @@ export class GameScene extends Phaser.Scene {
         color: '#ffffff',
         backgroundColor: '#000000a0',
         padding: { x: 8, y: 4 },
+        fontFamily: FONT_FAMILY,
       })
       .setOrigin(0.5, 0)
       .setScrollFactor(0)
       .setDepth(1000);
 
     const pauseButton = this.add
-      .text(DISPLAY.width - 8, HUD_TEXT_Y, 'Pause', {
+      .text(DISPLAY.width - 8, HUD_TEXT_Y, t('pause', language), {
         fontSize: '16px',
         color: '#ffffff',
         backgroundColor: '#000000a0',
         padding: { x: 8, y: 4 },
+        fontFamily: FONT_FAMILY,
       })
       .setOrigin(1, 0)
       .setScrollFactor(0)
@@ -194,16 +215,21 @@ export class GameScene extends Phaser.Scene {
       .setScrollFactor(0)
       .setDepth(1000);
 
-    this.add
-      .text(DISPLAY.width / 2, DISPLAY.height - 8, CONTROLS_HINT_TEXT, {
-        fontSize: '15px',
-        color: '#ffffffcc',
-        backgroundColor: '#000000a0',
-        padding: { x: 8, y: 4 },
-      })
-      .setOrigin(0.5, 1)
-      .setScrollFactor(0)
-      .setDepth(1000);
+    // §3.2 Controls: on-screen reminder of the keyboard bindings, shown only
+    // on non-touch devices (touch players see the on-screen buttons directly).
+    if (!this.touchInput) {
+      this.add
+        .text(DISPLAY.width / 2, DISPLAY.height - 8, t('controlsHint', language), {
+          fontSize: '15px',
+          color: '#ffffffcc',
+          backgroundColor: '#000000a0',
+          padding: { x: 8, y: 4 },
+          fontFamily: FONT_FAMILY,
+        })
+        .setOrigin(0.5, 1)
+        .setScrollFactor(0)
+        .setDepth(1000);
+    }
 
     this.input.keyboard?.addKey('F1').on('down', () => {
       this.debugVisible = !this.debugVisible;
@@ -227,7 +253,7 @@ export class GameScene extends Phaser.Scene {
 
     const events: SimEvent[] = [];
     while (this.accumulatorMs >= stepMs) {
-      events.push(...this.sim.step(SIM.stepSeconds, this.input_.read()));
+      events.push(...this.sim.step(SIM.stepSeconds, this.readInput()));
       this.accumulatorMs -= stepMs;
     }
 
@@ -235,12 +261,28 @@ export class GameScene extends Phaser.Scene {
     this.render();
   }
 
+  // §3.2: keyboard and touch are both always-live `Input` readers; whichever
+  // one the player is using has its buttons/keys down, the other reads all
+  // zero/false, so a straightforward OR merge needs no "active device" state.
+  private readInput() {
+    const keyboard = this.keyboardInput.read();
+    if (!this.touchInput) return keyboard;
+
+    const touch = this.touchInput.read();
+    return {
+      throttle: (keyboard.throttle || touch.throttle) as 0 | 1,
+      brake: (keyboard.brake || touch.brake) as 0 | 1,
+      steer: (keyboard.steer !== 0 ? keyboard.steer : touch.steer) as -1 | 0 | 1,
+      horn: keyboard.horn || touch.horn,
+    };
+  }
+
   private handleEvents(events: SimEvent[]): void {
     for (const event of events) {
-      if (event.type === 'nearMiss') this.showFloatingText('Near miss!', COLORS.nearMissText);
-      if (event.type === 'fine') this.showFloatingText('Fine!', COLORS.fineText);
-      if (event.type === 'pedestrianHit') this.showFloatingText('Pedestrian hit!', COLORS.pedestrianHitText);
-      if (event.type === 'hornUsed') this.showFloatingText('Honk!', COLORS.hornText);
+      if (event.type === 'nearMiss') this.showFloatingText(t('nearMiss', this.language), COLORS.nearMissText);
+      if (event.type === 'fine') this.showFloatingText(t('fine', this.language), COLORS.fineText);
+      if (event.type === 'pedestrianHit') this.showFloatingText(t('pedestrianHit', this.language), COLORS.pedestrianHitText);
+      if (event.type === 'hornUsed') this.showFloatingText(t('honk', this.language), COLORS.hornText);
       if (event.type === 'finish') this.endRun('win');
       if (event.type === 'fail') this.endRun('fail', event.failReason);
     }
@@ -264,6 +306,7 @@ export class GameScene extends Phaser.Scene {
       fineCount,
       stars,
       seed: this.sim.seed,
+      vehicleId: this.vehicleId,
     });
   }
 
@@ -277,6 +320,11 @@ export class GameScene extends Phaser.Scene {
     this.scene.launch('Pause');
   }
 
+  // Read by PauseScene's Restart button so the chosen vehicle survives a restart.
+  get currentVehicleId(): PlayableVehicleId {
+    return this.vehicleId;
+  }
+
   // Called by PauseScene's Resume button after it resumes this scene.
   resumeFromPause(): void {
     this.isPaused = false;
@@ -286,7 +334,7 @@ export class GameScene extends Phaser.Scene {
   private showFloatingText(message: string, color: string): void {
     const { player } = this.sim.state;
     const text = this.add
-      .text(player.x, player.y - VEHICLES.car.length, message, { fontSize: '18px', color })
+      .text(player.x, player.y - this.vehicleConfig.length, message, { fontSize: '18px', color, fontFamily: FONT_FAMILY })
       .setOrigin(0.5)
       .setDepth(900);
 
@@ -380,7 +428,9 @@ export class GameScene extends Phaser.Scene {
   // route progress (top edge bar, fraction of distance travelled so far).
   private renderHud(): void {
     const { player, score } = this.sim.state;
-    this.scoreSpeedText.setText(`Score: ${Math.round(score)}   Speed: ${Math.abs(player.speed).toFixed(0)} px/s`);
+    this.scoreSpeedText.setText(
+      `${t('scoreLabel', this.language)}: ${Math.round(score)}   ${t('speedLabel', this.language)}: ${Math.abs(player.speed).toFixed(0)} px/s`,
+    );
 
     const secondsLeft = Math.max(0, RUN.timeLimitSeconds - this.sim.state.elapsedSeconds);
     this.timerText.setText(Math.ceil(secondsLeft).toString());
@@ -407,7 +457,7 @@ export class GameScene extends Phaser.Scene {
   }
 
   private renderHealthBar(): void {
-    const fraction = Math.max(0, this.sim.state.player.health / VEHICLES.car.health);
+    const fraction = Math.max(0, this.sim.state.player.health / this.vehicleConfig.health);
     this.healthBarFill.setSize(HEALTH_BAR.width * fraction, HEALTH_BAR.height);
     this.healthBarFill.setFillStyle(
       fraction < VEHICLE_COLLISION.lowHealthThreshold ? COLORS.healthBarFillLow : COLORS.healthBarFill,

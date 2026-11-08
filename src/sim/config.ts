@@ -31,7 +31,29 @@ export const VEHICLES = {
     width: 36, // px
     length: 72, // px
     health: 100,
+    footpathAllowed: false, // §3.4: the car cannot mount the kerb
   },
+  motorcycle: {
+    id: 'motorcycle',
+    name: 'Motorcycle',
+    maxSpeed: 480, // px/s
+    reverseMax: 192, // px/s — TODO(tune): not given in §4.2; set to 40% of maxSpeed, same ratio as the car
+    acceleration: 380, // px/s²
+    braking: 520, // px/s² — TODO(tune): not given in §4.2; same guess as the car pending tuning
+    steerRate: 220, // deg/s
+    width: 14, // px
+    length: 40, // px
+    health: 40,
+    footpathAllowed: true, // §3.4: the motorcycle may ride onto the footpath
+  },
+} as const;
+
+// §9 Unlocks: total stars (across all vehicles, best result only) required
+// before a vehicle is selectable. Car and motorcycle are both free from the
+// start; microbus/CNG/bus are "Later" per §2 and not modelled here.
+export const UNLOCKS = {
+  car: 0,
+  motorcycle: 0,
 } as const;
 
 // §4.3 Movement: steering weakens as speed rises. The spec describes this

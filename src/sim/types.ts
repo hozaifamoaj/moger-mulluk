@@ -20,7 +20,15 @@ export interface VehicleConfig {
   width: number; // px
   length: number; // px
   health: number;
+  // §3.4: the motorcycle may ride onto the footpath; the car cannot mount
+  // the kerb at all. Read by resolveRoadContact to skip the footpath walls
+  // (both sides) for vehicles where this is true. The divider rule is
+  // unaffected — every vehicle is blocked there except at a mapped gap.
+  footpathAllowed: boolean;
 }
+
+// §4.1 Playable vehicles.
+export type PlayableVehicleId = 'car' | 'motorcycle';
 
 // Kinematic + damage state for the player's vehicle.
 export interface PlayerVehicleState {

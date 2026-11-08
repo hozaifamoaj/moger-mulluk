@@ -10,32 +10,43 @@ declare global {
   }
 }
 
-test('boots into the Menu scene and Play transitions to Game', async ({ page }) => {
+// Maps a named game object's bounds (in the given scene) to real page
+// coordinates, since Scale.FIT can scale the 720x1280 logical resolution to
+// any viewport size.
+async function clickByName(page: import('@playwright/test').Page, sceneKey: string, name: string): Promise<void> {
+  const target = await page.evaluate(
+    ({ sceneKey, name }) => {
+      const game = window.__game!;
+      const scene = game.scene.getScene(sceneKey);
+      const obj = scene.children.getByName(name) as Phaser.GameObjects.Text;
+      const bounds = obj.getBounds();
+      const rect = game.canvas.getBoundingClientRect();
+      const scaleX = rect.width / game.scale.width;
+      const scaleY = rect.height / game.scale.height;
+      return {
+        x: rect.left + (bounds.x + bounds.width / 2) * scaleX,
+        y: rect.top + (bounds.y + bounds.height / 2) * scaleY,
+      };
+    },
+    { sceneKey, name },
+  );
+
+  await page.mouse.click(target.x, target.y);
+}
+
+test('boots into the Menu scene and Play transitions through Vehicle Select into Game', async ({ page }) => {
   await page.goto('/');
 
   await expect(page.locator('canvas')).toBeVisible();
   await page.waitForFunction(() => window.__game?.scene.isActive('Menu') === true);
 
-  // Find the Play button through Phaser's own scene graph (by the name set in
-  // MenuScene.ts) and map its bounds to page coordinates through the canvas's
-  // actual CSS box, since Scale.FIT can scale the 720x1280 logical resolution
-  // to any viewport size.
-  const target = await page.evaluate(() => {
-    const game = window.__game!;
-    const menu = game.scene.getScene('Menu');
-    const play = menu.children.getByName('play-button') as Phaser.GameObjects.Text;
-    const bounds = play.getBounds();
-    const rect = game.canvas.getBoundingClientRect();
-    const scaleX = rect.width / game.scale.width;
-    const scaleY = rect.height / game.scale.height;
-    return {
-      x: rect.left + (bounds.x + bounds.width / 2) * scaleX,
-      y: rect.top + (bounds.y + bounds.height / 2) * scaleY,
-    };
-  });
+  await clickByName(page, 'Menu', 'play-button');
 
-  await page.mouse.click(target.x, target.y);
+  await page.waitForFunction(() => window.__game?.scene.isActive('VehicleSelect') === true);
+  expect(await page.evaluate(() => window.__game?.scene.isActive('Menu'))).toBe(false);
+
+  await clickByName(page, 'VehicleSelect', 'select-car-button');
 
   await page.waitForFunction(() => window.__game?.scene.isActive('Game') === true);
-  expect(await page.evaluate(() => window.__game?.scene.isActive('Menu'))).toBe(false);
+  expect(await page.evaluate(() => window.__game?.scene.isActive('VehicleSelect'))).toBe(false);
 });
