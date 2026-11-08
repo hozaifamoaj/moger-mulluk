@@ -28,6 +28,16 @@ npm run check      # typecheck + lint + test + build
 3. Build output directory: `dist`
 4. From milestone M8 onward, set the environment variables below in the Pages project settings (Production and Preview).
 
+## Setting up the Supabase project (milestone M8, online leaderboard)
+
+The leaderboard is entirely optional — skip this section and the game runs fully offline with no leaderboard UI shown at all.
+
+1. Create a Supabase project.
+2. Run `supabase/migrations/001_scores.sql` in the project's SQL editor. There is no migration runner in this repo (CLAUDE.md rule 12: no backend code, no server); apply it by hand, once.
+3. In Authentication settings, enable **anonymous sign-ins**.
+4. Optional but recommended: turn on **CAPTCHA protection** for anonymous sign-ins (Authentication → Settings) and create a Cloudflare Turnstile site. The game ships with Cloudflare's public always-passing test site key hardcoded in `src/online/turnstile.ts` — replace `TURNSTILE_SITE_KEY` with your project's real site key before relying on this in production.
+5. Copy the project URL and the `anon`/publishable key into the environment variables below.
+
 ## Environment variables
 
 Copy `.env.example` to `.env.local` for local development. Both variables are only needed from milestone M8 (the online leaderboard); without them the game builds and runs fully offline.

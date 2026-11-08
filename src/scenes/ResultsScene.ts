@@ -3,8 +3,14 @@ import { DISPLAY } from '../sim/config';
 import type { FailReason, PlayableVehicleId } from '../sim/types';
 import * as storage from '../storage';
 import { bestKey, getAllBests, persistUnlocks, totalStars, type BestResult } from '../vehicles';
-import { getSettings } from '../settings';
+import { getSettings, setSettings, type Language } from '../settings';
 import { FONT_FAMILY, t, type StringKey } from '../ui/strings';
+import { getClient } from '../online/client';
+import { signInIfNeeded, submitScore, queryRank, type ScoreSubmission } from '../online/leaderboard';
+import { buildScorePayload } from '../online/scorePayload';
+import { enqueuePending } from '../online/pending';
+import { showIdentityPrompt } from '../ui/identityPrompt';
+import pkg from '../../package.json';
 
 export interface ResultsData {
   outcome: 'win' | 'fail';
@@ -33,9 +39,10 @@ function formatDuration(seconds: number): string {
 }
 
 // §10.2 Results: win or fail reason, score, time, near misses, collisions,
-// fines, stars; Retry, Menu. No leaderboard rank yet (M8) and no "Change
-// vehicle" button yet (M7 adds vehicle select to navigate to).
+// fines, stars, leaderboard rank; Retry, Change vehicle, Menu.
 export class ResultsScene extends Phaser.Scene {
+  private rankText!: Phaser.GameObjects.Text;
+
   constructor() {
     super('Results');
   }
@@ -89,6 +96,12 @@ export class ResultsScene extends Phaser.Scene {
       })
       .setOrigin(0.5, 0);
 
+    this.rankText = this.add
+      .text(centerX, 500, '', { fontSize: '18px', color: '#ffee66', fontFamily: FONT_FAMILY })
+      .setOrigin(0.5);
+
+    if (data.outcome === 'win') void this.submitOnline(data, language);
+
     const makeButton = (y: number, label: string, onClick: () => void): void => {
       this.add
         .text(centerX, y, label, {
@@ -106,5 +119,56 @@ export class ResultsScene extends Phaser.Scene {
     makeButton(540, t('retry', language), () => this.scene.start('Game', { vehicleId: data.vehicleId }));
     makeButton(600, t('changeVehicle', language), () => this.scene.start('VehicleSelect'));
     makeButton(660, t('menu', language), () => this.scene.start('Menu'));
+  }
+
+  // §10.2/§12.7: submits a win to the leaderboard. Nickname + a human check
+  // are only ever asked for here, at the one moment a score is about to be
+  // written — reading the leaderboard (Menu/LeaderboardScene) needs neither.
+  private async submitOnline(data: ResultsData, language: Language): Promise<void> {
+    const client = getClient();
+    if (!client) return;
+
+    const settings = getSettings();
+    let nickname = settings.nickname;
+    let signedIn = await signInIfNeeded(client);
+
+    if (!nickname || !signedIn) {
+      const result = await showIdentityPrompt({
+        title: t('nicknamePromptTitle', language),
+        nicknameLabel: t('nicknameLabel', language),
+        confirmLabel: t('confirm', language),
+        skipLabel: t('skip', language),
+        errorMessages: {
+          tooShort: t('nicknameTooShort', language),
+          tooLong: t('nicknameTooLong', language),
+          blocked: t('nicknameBlocked', language),
+        },
+        needsNickname: !nickname,
+        needsCaptcha: !signedIn,
+        initialNickname: nickname ?? undefined,
+      });
+      if (!result) return; // player skipped; no submission, no rank shown
+
+      if (result.nickname !== null) {
+        nickname = result.nickname;
+        setSettings({ ...settings, nickname });
+      }
+      if (!signedIn) signedIn = await signInIfNeeded(client, result.captchaToken ?? undefined);
+    }
+
+    if (!nickname || !signedIn) return;
+
+    const payload: ScoreSubmission | null = buildScorePayload(data, nickname, pkg.version);
+    if (!payload) return;
+
+    const submitResult = await submitScore(client, payload);
+    if (!submitResult.ok) {
+      if (submitResult.reason !== 'rate_limited') enqueuePending(payload);
+      this.rankText.setText(t('leaderboardUnavailable', language));
+      return;
+    }
+
+    const rank = await queryRank(client, payload.vehicle, payload.score);
+    if (rank !== null) this.rankText.setText(`${t('rankLabel', language)}: #${rank}`);
   }
 }

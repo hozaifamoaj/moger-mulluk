@@ -1,14 +1,15 @@
 import Phaser from 'phaser';
 import { DISPLAY } from '../sim/config';
 import { getSettings, setSettings, type Settings } from '../settings';
+import { showIdentityPrompt } from '../ui/identityPrompt';
 import { FONT_FAMILY, t } from '../ui/strings';
 
-// §10.2 Settings: sound and language only in this milestone (nickname and
-// leaderboard-related settings arrive with M8).
+// §10.2 Settings: sound, language and nickname.
 export class SettingsScene extends Phaser.Scene {
   private settings!: Settings;
   private soundButton!: Phaser.GameObjects.Text;
   private languageButton!: Phaser.GameObjects.Text;
+  private nicknameButton!: Phaser.GameObjects.Text;
   private backButton!: Phaser.GameObjects.Text;
 
   constructor() {
@@ -40,16 +41,42 @@ export class SettingsScene extends Phaser.Scene {
       this.refresh();
     });
 
+    this.nicknameButton = this.makeButton(480, '', () => void this.changeNickname());
+
     this.backButton = this.makeButton(600, '', () => this.scene.start('Menu'));
 
     this.refresh();
   }
 
   private refresh(): void {
-    const { sound, language } = this.settings;
+    const { sound, language, nickname } = this.settings;
     this.soundButton.setText(`${t('soundLabel', language)}: ${sound ? t('on', language) : t('off', language)}`);
     this.languageButton.setText(`${t('languageLabel', language)}: ${language === 'en' ? 'English' : 'বাংলা'}`);
+    this.nicknameButton.setText(`${t('nicknameLabel', language)}: ${nickname ?? t('noNickname', language)}`);
     this.backButton.setText(t('back', language));
+  }
+
+  private async changeNickname(): Promise<void> {
+    const { language, nickname } = this.settings;
+    const result = await showIdentityPrompt({
+      title: t('nicknameChangeTitle', language),
+      nicknameLabel: t('nicknameLabel', language),
+      confirmLabel: t('confirm', language),
+      skipLabel: t('skip', language),
+      errorMessages: {
+        tooShort: t('nicknameTooShort', language),
+        tooLong: t('nicknameTooLong', language),
+        blocked: t('nicknameBlocked', language),
+      },
+      needsNickname: true,
+      needsCaptcha: false,
+      initialNickname: nickname ?? undefined,
+    });
+    if (!result || result.nickname === null) return;
+
+    this.settings = { ...this.settings, nickname: result.nickname };
+    setSettings(this.settings);
+    this.refresh();
   }
 
   private makeButton(y: number, label: string, onClick: () => void): Phaser.GameObjects.Text {

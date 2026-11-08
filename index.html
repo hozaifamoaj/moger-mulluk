@@ -20,6 +20,11 @@
   </head>
   <body>
     <div id="app"></div>
+    <!-- §12.7: Cloudflare Turnstile widget, used only when an anonymous
+         Supabase sign-in needs a fresh CAPTCHA token (src/online/turnstile.ts).
+         Loaded async/deferred so a slow or blocked CDN never delays the game
+         itself; src/online/turnstile.ts checks window.turnstile before use. -->
+    <script src="https://challenges.cloudflare.com/turnstile/v0/api.js" async defer></script>
     <script type="module" src="/src/main.ts"></script>
   </body>
 </html>

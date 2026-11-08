@@ -7,6 +7,7 @@ import { SettingsScene } from './scenes/SettingsScene';
 import { GameScene } from './scenes/GameScene';
 import { PauseScene } from './scenes/PauseScene';
 import { ResultsScene } from './scenes/ResultsScene';
+import { LeaderboardScene } from './scenes/LeaderboardScene';
 
 const game = new Phaser.Game({
   type: Phaser.AUTO,
@@ -18,7 +19,7 @@ const game = new Phaser.Game({
     mode: Phaser.Scale.FIT,
     autoCenter: Phaser.Scale.CENTER_BOTH,
   },
-  scene: [BootScene, MenuScene, VehicleSelectScene, SettingsScene, GameScene, PauseScene, ResultsScene],
+  scene: [BootScene, MenuScene, VehicleSelectScene, SettingsScene, GameScene, PauseScene, ResultsScene, LeaderboardScene],
 });
 
 // §3.5: the game pauses automatically when the browser tab is hidden.

@@ -29,26 +29,26 @@ describe('settings', () => {
 
   it('returns the default settings when nothing has been stored yet', () => {
     globalThis.localStorage = fakeStorage();
-    expect(getSettings()).toEqual({ sound: true, language: 'en' });
+    expect(getSettings()).toEqual({ sound: true, language: 'en', nickname: null });
   });
 
   it('round-trips a stored settings object', () => {
     globalThis.localStorage = fakeStorage();
-    setSettings({ sound: false, language: 'bn' });
-    expect(getSettings()).toEqual({ sound: false, language: 'bn' });
+    setSettings({ sound: false, language: 'bn', nickname: 'Rafi' });
+    expect(getSettings()).toEqual({ sound: false, language: 'bn', nickname: 'Rafi' });
   });
 
   it('falls back to defaults when the stored value is corrupt JSON', () => {
     const backing = fakeStorage();
     backing.setItem('mm.settings', '{not json');
     globalThis.localStorage = backing;
-    expect(getSettings()).toEqual({ sound: true, language: 'en' });
+    expect(getSettings()).toEqual({ sound: true, language: 'en', nickname: null });
   });
 
   it('falls back to defaults when the stored value has the wrong shape', () => {
     const backing = fakeStorage();
     backing.setItem('mm.settings', JSON.stringify({ sound: 'yes', language: 'fr' }));
     globalThis.localStorage = backing;
-    expect(getSettings()).toEqual({ sound: true, language: 'en' });
+    expect(getSettings()).toEqual({ sound: true, language: 'en', nickname: null });
   });
 });

@@ -46,6 +46,21 @@ const EN = {
   languageLabel: 'Language',
   on: 'On',
   off: 'Off',
+  leaderboard: 'Leaderboard',
+  leaderboardUnavailable: 'Leaderboard unavailable, score saved and will be sent later',
+  leaderboardLoading: 'Loading…',
+  rankLabel: 'Your rank',
+  nicknameLabel: 'Nickname',
+  nicknamePromptTitle: 'Choose a nickname for the leaderboard',
+  captchaPromptTitle: 'Confirming you are human…',
+  nicknameChangeTitle: 'Change nickname',
+  nicknameTooShort: 'At least 2 characters',
+  nicknameTooLong: 'At most 16 characters',
+  nicknameBlocked: 'Please choose a different nickname',
+  confirm: 'Confirm',
+  skip: 'Skip',
+  changeNickname: 'Change nickname',
+  noNickname: 'Not set',
 } as const;
 
 const BN: Record<keyof typeof EN, string> = {
@@ -88,6 +103,21 @@ const BN: Record<keyof typeof EN, string> = {
   languageLabel: 'ভাষা',
   on: 'চালু',
   off: 'বন্ধ',
+  leaderboard: 'লিডারবোর্ড',
+  leaderboardUnavailable: 'লিডারবোর্ড অনুপলব্ধ, স্কোর সংরক্ষিত হয়েছে এবং পরে পাঠানো হবে',
+  leaderboardLoading: 'লোড হচ্ছে…',
+  rankLabel: 'আপনার র‍্যাংক',
+  nicknameLabel: 'নিকনেম',
+  nicknamePromptTitle: 'লিডারবোর্ডের জন্য একটি নিকনেম বেছে নিন',
+  captchaPromptTitle: 'আপনি মানুষ কিনা যাচাই করা হচ্ছে…',
+  nicknameChangeTitle: 'নিকনেম পরিবর্তন করুন',
+  nicknameTooShort: 'কমপক্ষে ২ অক্ষর',
+  nicknameTooLong: 'সর্বোচ্চ ১৬ অক্ষর',
+  nicknameBlocked: 'দয়া করে অন্য নিকনেম বেছে নিন',
+  confirm: 'নিশ্চিত করুন',
+  skip: 'বাদ দিন',
+  changeNickname: 'নিকনেম পরিবর্তন করুন',
+  noNickname: 'সেট করা হয়নি',
 };
 
 const STRINGS: Record<Language, Record<keyof typeof EN, string>> = { en: EN, bn: BN };

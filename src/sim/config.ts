@@ -314,3 +314,9 @@ export const SCORING = {
   twoStarThreshold: 1800,
   threeStarThreshold: 2600,
 } as const;
+
+// §12.7 Online leaderboard: every Supabase call races against this timeout
+// (CLAUDE.md rule 12: gameplay never waits on the network).
+export const ONLINE = {
+  timeoutMs: 8000,
+} as const;
