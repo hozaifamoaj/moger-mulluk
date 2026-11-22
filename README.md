@@ -1,5 +1,7 @@
 # Moger-mulluk
 
+[![Live Demo](https://img.shields.io/badge/demo-live-brightgreen)](https://moger-mulluk.hozaifamoaj.workers.dev)
+
 Top-down 2D browser game: drive through Dhaka traffic from Mohakhali to Banani before the timer runs out.
 
 See `docs/spec.md` for the design and technical spec, and `docs/build-plan.md` for the milestone plan.
