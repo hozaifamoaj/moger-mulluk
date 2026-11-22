@@ -8,3 +8,10 @@ blob-report/
 playwright/.cache/
 .claude/settings.local.json
 Moger-mulluk_GDD_Technical_Blueprint_v4.docx
+
+# Design/plan/handover docs: kept locally for development (CLAUDE.md
+# still reads these), excluded from the public repo to avoid exposing
+# the game's design and roadmap.
+docs/spec.md
+docs/build-plan.md
+docs/progress.md

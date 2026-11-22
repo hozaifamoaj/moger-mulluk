@@ -4,7 +4,7 @@
 
 Top-down 2D browser game: drive through Dhaka traffic from Mohakhali to Banani before the timer runs out.
 
-See `docs/spec.md` for the design and technical spec, and `docs/build-plan.md` for the milestone plan.
+The design spec and milestone plan are kept out of version control (see `.gitignore`) and developed locally.
 
 ## Requirements
 
