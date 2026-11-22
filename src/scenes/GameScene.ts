@@ -79,7 +79,7 @@ export class GameScene extends Phaser.Scene {
   private healthBarFill!: Phaser.GameObjects.Rectangle;
   private hornBarFill!: Phaser.GameObjects.Rectangle;
   private debugText!: Phaser.GameObjects.Text;
-  private debugVisible = true;
+  private debugVisible = false;
   private accumulatorMs = 0;
   private isPaused = false;
   private countdownRemaining = COUNTDOWN_SECONDS;
@@ -230,7 +230,8 @@ export class GameScene extends Phaser.Scene {
     this.debugText = this.add
       .text(8, 76, '', { fontSize: '16px', color: '#ffffff', backgroundColor: '#000000a0', padding: { x: 6, y: 4 } })
       .setScrollFactor(0)
-      .setDepth(1000);
+      .setDepth(1000)
+      .setVisible(this.debugVisible);
 
     // §3.2 Controls: on-screen reminder of the keyboard bindings, shown only
     // on non-touch devices (touch players see the on-screen buttons directly).

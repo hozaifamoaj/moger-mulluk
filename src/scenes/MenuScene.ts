@@ -14,11 +14,11 @@ export class MenuScene extends Phaser.Scene {
     const centerX = DISPLAY.width / 2;
 
     this.add
-      .text(centerX, 380, t('gameTitle', language), { fontSize: '48px', color: '#ffffff', fontFamily: FONT_FAMILY })
+      .text(centerX, 445, t('gameTitle', language), { fontSize: '48px', color: '#ffffff', fontFamily: FONT_FAMILY })
       .setOrigin(0.5);
 
     const playButton = this.add
-      .text(centerX, 560, t('play', language), {
+      .text(centerX, 625, t('play', language), {
         fontSize: '32px',
         color: '#ffffff',
         backgroundColor: '#2a7a4f',
@@ -32,7 +32,7 @@ export class MenuScene extends Phaser.Scene {
     playButton.on('pointerup', () => this.scene.start('VehicleSelect'));
 
     const settingsButton = this.add
-      .text(centerX, 630, t('settings', language), {
+      .text(centerX, 695, t('settings', language), {
         fontSize: '26px',
         color: '#ffffff',
         backgroundColor: '#444444',
@@ -48,7 +48,7 @@ export class MenuScene extends Phaser.Scene {
     // (CLAUDE.md rule 12: missing env vars disable online features cleanly).
     if (getClient()) {
       const leaderboardButton = this.add
-        .text(centerX, 700, t('leaderboard', language), {
+        .text(centerX, 765, t('leaderboard', language), {
           fontSize: '26px',
           color: '#ffffff',
           backgroundColor: '#444444',
@@ -64,7 +64,7 @@ export class MenuScene extends Phaser.Scene {
     // see the on-screen buttons directly instead.
     if (!this.sys.game.device.input.touch) {
       this.add
-        .text(centerX, 770, t('controlsHint', language), {
+        .text(centerX, 835, t('controlsHint', language), {
           fontSize: '18px',
           color: '#cccccc',
           fontFamily: FONT_FAMILY,

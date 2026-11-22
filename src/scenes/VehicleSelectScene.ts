@@ -13,6 +13,7 @@ const CARD = {
   gap: 40,
   top: 260,
   previewScale: 2.5, // greybox preview only; real in-run sizes come from VEHICLES directly (rule 13)
+  maxPreviewHeight: 140, // caps longer vehicles' preview so it can't overlap the name label below it
 } as const;
 
 // §10.2 Vehicle select: image, name, speed, handling, health, lock status.
@@ -67,7 +68,14 @@ export class VehicleSelectScene extends Phaser.Scene {
       .setStrokeStyle(2, unlocked ? 0x55cc55 : 0x555555);
 
     this.add
-      .rectangle(x, top + 90, config.width * CARD.previewScale, config.length * CARD.previewScale, 0xe0e0e0, unlocked ? 1 : 0.3)
+      .rectangle(
+        x,
+        top + 90,
+        config.width * CARD.previewScale,
+        Math.min(config.length * CARD.previewScale, CARD.maxPreviewHeight),
+        0xe0e0e0,
+        unlocked ? 1 : 0.3,
+      )
       .setOrigin(0.5);
 
     this.add

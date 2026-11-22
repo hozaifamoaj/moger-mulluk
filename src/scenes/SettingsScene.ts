@@ -85,7 +85,7 @@ export class SettingsScene extends Phaser.Scene {
       .text(centerX, y, label, {
         fontSize: '26px',
         color: '#ffffff',
-        backgroundColor: '#2a7a4f',
+        backgroundColor: '#444444',
         padding: { x: 24, y: 10 },
         fontFamily: FONT_FAMILY,
       })
