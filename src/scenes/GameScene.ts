@@ -1,5 +1,5 @@
 import Phaser from 'phaser';
-import { DISPLAY, ROAD, RUN, SIM, VEHICLES, VEHICLE_COLLISION, PEDESTRIAN, HORN } from '../sim/config';
+import { DISPLAY, ROAD, RUN, SIM, VEHICLES, VEHICLE_COLLISION, HORN } from '../sim/config';
 import { computeRoadEdges } from '../sim/road';
 import { Sim } from '../sim/sim';
 import { RouteMap, validateSegments } from '../sim/map';
@@ -7,7 +7,9 @@ import { KeyboardInput } from '../ui/KeyboardInput';
 import { TouchInput } from '../ui/TouchInput';
 import { getSettings, type Language } from '../settings';
 import { FONT_FAMILY, t } from '../ui/strings';
-import type { FailReason, PlayableVehicleId, SimEvent, TrafficVehicleType, VehicleConfig } from '../sim/types';
+import { PEDESTRIAN_TEXTURE, PLAYER_TEXTURE, TRAFFIC_TEXTURE } from '../ui/sprites';
+import { AudioDirector } from '../ui/audioDirector';
+import type { FailReason, PlayableVehicleId, SimEvent, VehicleConfig } from '../sim/types';
 
 const MAP_URL = 'assets/maps/mohakhali-banani.json';
 
@@ -15,20 +17,14 @@ const MAP_URL = 'assets/maps/mohakhali-banani.json';
 // timer (which only advances inside Sim.step) correctly doesn't count it.
 const COUNTDOWN_SECONDS = 3;
 
-// Greybox placeholder colors (rule 13: replaced by sprites in M9). Sizes and
-// positions come from src/sim/config.ts, not from these.
+// Road/HUD colors. Vehicle and pedestrian visuals are sprites from
+// src/ui/sprites.ts (rule 13) — sizes and positions come from
+// src/sim/config.ts, not from here.
 const COLORS = {
   footpath: 0x3a3f33,
   carriageway: 0x24262b,
   divider: 0x7a6a2a,
   laneMarking: 0xdddddd,
-  car: 0xe0e0e0,
-  trafficCar: 0x5588ff,
-  trafficBus: 0xffaa33,
-  trafficRickshaw: 0x33cc88,
-  trafficCng: 0x33cccc,
-  trafficMotorcycle: 0xff5577,
-  trafficParked: 0x888888,
   healthBarBg: 0x222222,
   healthBarFill: 0x55cc55,
   healthBarFillLow: 0xcc5555,
@@ -36,9 +32,6 @@ const COLORS = {
   fineText: '#ff6666',
   pedestrianHitText: '#ff3333',
   hornText: '#66ccff',
-  pedestrianWaiting: 0xffcc00,
-  pedestrianWalking: 0xff9966,
-  pedestrianOverbridge: 0xaaaaaa,
   overbridgeBand: 0x3a3a3a,
   hornBarBg: 0x222222,
   hornBarReady: 0x66ccff,
@@ -56,6 +49,14 @@ const BLINK_INTERVAL_MS = 100; // §8.1: player sprite blinks while invulnerable
 // §6: overbridge is a cosmetic-only structure (never collidable, §6/§8) drawn
 // as a translucent band spanning the full road width at the crossing's y.
 const OVERBRIDGE_VISUAL = { thickness: 24, alpha: 0.5, depth: 50 } as const;
+// M9 / §11 audio: presentation-only cosmetic thresholds (not sim rules, so
+// kept here rather than src/sim/config.ts, matching COLORS/HEALTH_BAR above).
+const AUDIO = {
+  brakeMinSpeed: 15, // px/s: below this, pressing brake is a stop, not a squeal
+  bellRangePx: 140, // px from the player a rickshaw must be within to ring
+  bellCooldownMinMs: 4000,
+  bellCooldownMaxMs: 8000,
+} as const;
 
 export interface GameSceneData {
   vehicleId?: PlayableVehicleId;
@@ -69,9 +70,12 @@ export class GameScene extends Phaser.Scene {
   private language!: Language;
   private keyboardInput!: KeyboardInput;
   private touchInput: TouchInput | null = null;
-  private car!: Phaser.GameObjects.Rectangle;
-  private trafficRects!: Phaser.GameObjects.Rectangle[];
-  private pedestrianCircles!: Phaser.GameObjects.Arc[];
+  private car!: Phaser.GameObjects.Sprite;
+  private trafficSprites!: Phaser.GameObjects.Sprite[];
+  private pedestrianSprites!: Phaser.GameObjects.Sprite[];
+  private rickshawBellCooldownMs!: number[];
+  private audio!: AudioDirector;
+  private wasBraking = false;
   private healthBarFill!: Phaser.GameObjects.Rectangle;
   private hornBarFill!: Phaser.GameObjects.Rectangle;
   private debugText!: Phaser.GameObjects.Text;
@@ -101,12 +105,12 @@ export class GameScene extends Phaser.Scene {
     this.ended = false;
     this.countdownRemaining = COUNTDOWN_SECONDS;
     this.accumulatorMs = 0;
+    this.wasBraking = false;
     this.vehicleId = data?.vehicleId ?? 'car';
     this.vehicleConfig = VEHICLES[this.vehicleId];
     this.language = getSettings().language;
 
     const language = this.language;
-    const vehicleConfig = this.vehicleConfig;
 
     this.map = this.loadMap();
 
@@ -119,17 +123,30 @@ export class GameScene extends Phaser.Scene {
     this.drawRoad();
     this.drawOverbridges();
 
-    this.trafficRects = this.sim.state.traffic.map(() =>
-      this.add.rectangle(0, 0, 1, 1, COLORS.trafficCar).setOrigin(0.5).setVisible(false),
+    this.trafficSprites = this.sim.state.traffic.map(() =>
+      this.add.sprite(0, 0, TRAFFIC_TEXTURE.car).setOrigin(0.5).setVisible(false),
     );
+    this.rickshawBellCooldownMs = this.sim.state.traffic.map(() => this.randomBellCooldown());
 
-    this.pedestrianCircles = this.sim.state.pedestrians.map(() =>
-      this.add.circle(0, 0, PEDESTRIAN.radius, COLORS.pedestrianWaiting).setVisible(false),
+    this.pedestrianSprites = this.sim.state.pedestrians.map(() =>
+      this.add.sprite(0, 0, PEDESTRIAN_TEXTURE.waiting).setOrigin(0.5).setVisible(false),
     );
 
     this.car = this.add
-      .rectangle(this.sim.state.player.x, this.sim.state.player.y, vehicleConfig.width, vehicleConfig.length, COLORS.car)
+      .sprite(this.sim.state.player.x, this.sim.state.player.y, PLAYER_TEXTURE[this.vehicleId])
       .setOrigin(0.5);
+
+    // M9 / §11: procedurally synthesised audio (src/ui/audioDirector.ts).
+    // GameScene's instance persists across restarts, so the continuous
+    // engine/ambience nodes are torn down on shutdown and restarted fresh
+    // each create(); 'pause'/'resume' cover both the Pause menu and the
+    // tab-hidden case (main.ts calls scene.pause()/resume() for both).
+    this.audio = new AudioDirector(getSettings().sound);
+    this.audio.resume();
+    this.audio.start();
+    this.events.on('pause', () => this.audio.suspend());
+    this.events.on('resume', () => this.audio.resume());
+    this.events.once('shutdown', () => this.audio.teardown());
 
     this.add
       .rectangle(HEALTH_BAR.x, HEALTH_BAR.y, HEALTH_BAR.width, HEALTH_BAR.height, COLORS.healthBarBg)
@@ -257,6 +274,7 @@ export class GameScene extends Phaser.Scene {
       this.accumulatorMs -= stepMs;
     }
 
+    this.handleBrakeAudio();
     this.handleEvents(events);
     this.render();
   }
@@ -282,10 +300,29 @@ export class GameScene extends Phaser.Scene {
       if (event.type === 'nearMiss') this.showFloatingText(t('nearMiss', this.language), COLORS.nearMissText);
       if (event.type === 'fine') this.showFloatingText(t('fine', this.language), COLORS.fineText);
       if (event.type === 'pedestrianHit') this.showFloatingText(t('pedestrianHit', this.language), COLORS.pedestrianHitText);
-      if (event.type === 'hornUsed') this.showFloatingText(t('honk', this.language), COLORS.hornText);
+      if (event.type === 'hornUsed') {
+        this.showFloatingText(t('honk', this.language), COLORS.hornText);
+        this.audio.playHorn(this.vehicleId);
+      }
+      if (event.type === 'vehicleCollision') this.audio.playCrash(event.collisionClass === 'scrape' ? 'light' : 'heavy');
       if (event.type === 'finish') this.endRun('win');
       if (event.type === 'fail') this.endRun('fail', event.failReason);
     }
+  }
+
+  // M9 / §11: a one-shot brake squeal on the rising edge of the brake input,
+  // not every frame it's held — read once here, separately from the sim
+  // steps' own input reads, since this is a cosmetic trigger, not a sim rule.
+  private handleBrakeAudio(): void {
+    const braking = this.readInput().brake === 1;
+    if (braking && !this.wasBraking && Math.abs(this.sim.state.player.speed) > AUDIO.brakeMinSpeed) {
+      this.audio.playBrake();
+    }
+    this.wasBraking = braking;
+  }
+
+  private randomBellCooldown(): number {
+    return AUDIO.bellCooldownMinMs + Math.random() * (AUDIO.bellCooldownMaxMs - AUDIO.bellCooldownMinMs);
   }
 
   // §3.5: hands off to the Results screen with everything it needs to
@@ -353,6 +390,7 @@ export class GameScene extends Phaser.Scene {
     this.car.setRotation(player.heading);
     this.car.setAlpha(this.blinkAlpha());
 
+    this.audio.setEngineIntensity(Math.abs(player.speed) / this.vehicleConfig.maxSpeed);
     this.renderTraffic();
     this.renderPedestrians();
     this.renderHealthBar();
@@ -379,38 +417,48 @@ export class GameScene extends Phaser.Scene {
   }
 
   private renderTraffic(): void {
-    const traffic = this.sim.state.traffic;
+    const { player, traffic } = this.sim.state;
+    const frameDeltaMs = this.game.loop.delta;
     for (let i = 0; i < traffic.length; i++) {
       const vehicle = traffic[i];
-      const rect = this.trafficRects[i];
-      rect.setVisible(vehicle.active);
+      const sprite = this.trafficSprites[i];
+      sprite.setVisible(vehicle.active);
       if (!vehicle.active) continue;
 
-      rect.setPosition(vehicle.x, vehicle.y);
-      rect.setSize(vehicle.width, vehicle.length);
-      rect.setFillStyle(this.trafficColor(vehicle.type));
+      sprite.setPosition(vehicle.x, vehicle.y);
+      sprite.setTexture(TRAFFIC_TEXTURE[vehicle.type]);
+
+      // M9 / §11: an occasional rickshaw bell, cosmetic only — a presentation-
+      // side per-slot cooldown, since the sim has no concept of "has rung".
+      if (vehicle.type === 'rickshaw') {
+        this.rickshawBellCooldownMs[i] -= frameDeltaMs;
+        if (this.rickshawBellCooldownMs[i] <= 0 && Math.abs(vehicle.y - player.y) < AUDIO.bellRangePx) {
+          this.audio.playBell();
+          this.rickshawBellCooldownMs[i] = this.randomBellCooldown();
+        }
+      }
     }
   }
 
   // §6: waiting-passenger, footpath-waiting/walking, and overbridge
-  // pedestrians each get a distinct color so their state reads at a glance;
+  // pedestrians each use a distinct sprite so their state reads at a glance;
   // overbridge users are also drawn above everything else (depth), since
   // they're physically elevated and never a collision target.
   private renderPedestrians(): void {
     const pedestrians = this.sim.state.pedestrians;
     for (let i = 0; i < pedestrians.length; i++) {
       const ped = pedestrians[i];
-      const circle = this.pedestrianCircles[i];
-      circle.setVisible(ped.active);
+      const sprite = this.pedestrianSprites[i];
+      sprite.setVisible(ped.active);
       if (!ped.active) continue;
 
-      circle.setPosition(ped.x, ped.y);
+      sprite.setPosition(ped.x, ped.y);
       if (ped.usesOverbridge) {
-        circle.setFillStyle(COLORS.pedestrianOverbridge);
-        circle.setDepth(OVERBRIDGE_VISUAL.depth + 1);
+        sprite.setTexture(PEDESTRIAN_TEXTURE.overbridge);
+        sprite.setDepth(OVERBRIDGE_VISUAL.depth + 1);
       } else {
-        circle.setFillStyle(ped.phase === 'waiting' ? COLORS.pedestrianWaiting : COLORS.pedestrianWalking);
-        circle.setDepth(0);
+        sprite.setTexture(ped.phase === 'waiting' ? PEDESTRIAN_TEXTURE.waiting : PEDESTRIAN_TEXTURE.walking);
+        sprite.setDepth(0);
       }
     }
   }
@@ -437,23 +485,6 @@ export class GameScene extends Phaser.Scene {
 
     const fraction = Math.max(0, Math.min(1, (this.map.totalLength - player.y) / this.map.totalLength));
     this.progressBarFill.setSize(DISPLAY.width * fraction, PROGRESS_BAR.height);
-  }
-
-  private trafficColor(type: TrafficVehicleType): number {
-    switch (type) {
-      case 'bus':
-        return COLORS.trafficBus;
-      case 'rickshaw':
-        return COLORS.trafficRickshaw;
-      case 'cng':
-        return COLORS.trafficCng;
-      case 'motorcycle':
-        return COLORS.trafficMotorcycle;
-      case 'parked':
-        return COLORS.trafficParked;
-      default:
-        return COLORS.trafficCar;
-    }
   }
 
   private renderHealthBar(): void {
